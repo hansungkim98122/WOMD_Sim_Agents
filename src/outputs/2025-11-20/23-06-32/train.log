@@ -1,0 +1,22 @@
+[2025-11-20 23:06:32,116][__main__][INFO] - batch_size: 1024
+learning_rate: 0.0005
+epochs: 32
+model_save_freq: 4
+cross_validation_freq: 4
+tensorboard_save_dir: /home/hansung/end2end_ad/models/tensorboard_logs
+model_save_dir: /home/hansung/end2end_ad/models/weights
+model:
+  _target_: models.MLP
+  name: MLP
+  input_dim: 22
+  num_layers: 5
+  hidden_dim: 1024
+  output_dim: 160
+  activation: gelu
+  dropout: 0.2
+  num_agents_per_scenario: 128
+  num_states_steps: 11
+  num_future_steps: 80
+dataset:
+  filepath: /home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/uncompressed/scenario/
+

@@ -1,0 +1,12 @@
+raw_data_path: '/home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/uncompressed/scenario'
+output_path: '/home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/processed/scenario'
+
+# Tokenizer parameters
+# AgentMotionTokenizer parameters
+history_num_frames: 11
+num_future_steps: 80
+
+
+# RoadVectorTokenizer parameters
+max_dist: 200.0
+max_vectors: 1024

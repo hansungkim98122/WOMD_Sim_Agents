@@ -1,0 +1,3 @@
+model:
+  name: MLP
+  learning_rate: 0.01

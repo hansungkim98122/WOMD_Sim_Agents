@@ -1,0 +1,26 @@
+batch_size: 48
+learning_rate: 5e-4
+epochs: 32
+model_save_freq: 4
+cross_validation_freq: 4
+tensorboard_save_dir: '/home/hansung/end2end_ad/models/tensorboard_logs'
+model_save_dir: '/home/hansung/end2end_ad/models/weights'
+
+model:
+  _target_: models.Backbone
+  name: "Backbone"
+  input_dim: 22 #num_states_steps * 2
+  num_layers: 5
+  hidden_dim: 1024
+  output_dim: 160 #num_future_steps * 2
+  activation: 'gelu'
+  dropout: 0.2
+
+  MLA: False #bool flag to use Multi-head Latent Attention
+
+  num_agents_per_scenario: 128
+  num_states_steps: 11
+  num_future_steps: 80
+
+dataset:
+  filepath: '/home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/uncompressed/scenario'
