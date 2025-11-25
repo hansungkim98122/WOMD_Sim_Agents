@@ -7,8 +7,8 @@ tensorboard_save_dir: '/home/hansung/end2end_ad/models/tensorboard_logs'
 model_save_dir: '/home/hansung/end2end_ad/models/weights'
 
 model:
-  _target_: models.Backbone
-  name: "Backbone"
+  _target_: models.RoadNet
+  name: "RoadNet"
   input_dim: 22 #num_states_steps * 2
   num_layers: 5
   hidden_dim: 1024

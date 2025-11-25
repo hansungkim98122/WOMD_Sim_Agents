@@ -302,3 +302,110 @@ class MultiHeadLatentAttention(nn.Module):
         f"Final output shape {att_output.size()} incorrect"
 
         return att_output
+
+import math
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class RPEMultiheadSelfAttention(nn.Module):
+    """
+    Multi-head self-attention where:
+      Q comes from token embeddings r,
+      K and V come from concatenating r and extra RPE features.
+
+    r:   [B, N, D_r]
+    rpe: [B, N, D_rpe]   (could be pos/dir/type or some learned feature)
+    mask: [B, N] bool    (True = valid, False = pad)
+    """
+    def __init__(
+        self,
+        d_r: int,          # dim of token embedding r
+        d_rpe: int,        # dim of RPE / extra feature per token
+        d_model: int,      # model dimension (per token)
+        n_heads: int,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        self.d_r = d_r
+        self.d_rpe = d_rpe
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        # Q from r
+        self.q_proj = nn.Linear(d_r, d_model)
+
+        # K and V from [r ; rpe]
+        self.k_proj = nn.Linear(d_r + d_rpe, d_model)
+        self.v_proj = nn.Linear(d_r + d_rpe, d_model)
+
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        r: torch.Tensor,               # [B, N, D_r]
+        rpe: torch.Tensor,             # [B, N, D_rpe]
+        mask: Optional[torch.Tensor] = None,  # [B, N] bool
+    ) -> torch.Tensor:
+        B, N, _ = r.shape
+        H = self.n_heads
+        dh = self.d_head
+
+        # --- 1) Project Q, K, V ---
+        q = self.q_proj(r)                          # [B, N, D]
+        kv_in = torch.cat([r, rpe], dim=-1)         # [B, N, D_r + D_rpe]
+        k = self.k_proj(kv_in)                      # [B, N, D]
+        v = self.v_proj(kv_in)                      # [B, N, D]
+
+        # --- 2) Reshape for multi-head: [B, H, N, d_head] ---
+        q = q.view(B, N, H, dh).transpose(1, 2)     # [B, H, N, dh]
+        k = k.view(B, N, H, dh).transpose(1, 2)     # [B, H, N, dh]
+        v = v.view(B, N, H, dh).transpose(1, 2)     # [B, H, N, dh]
+
+        # Flatten heads into batch for scaled_dot_product_attention
+        q = q.reshape(B * H, N, dh)                 # [B*H, N, dh]
+        k = k.reshape(B * H, N, dh)
+        v = v.reshape(B * H, N, dh)
+
+        # --- 3) Build attention mask ---
+        # scaled_dot_product_attention expects attn_mask [B*H, N, N] or [N, N]
+        attn_mask = None
+        if mask is not None:
+            # mask: [B, N] (True = valid, False = pad)
+            mask = mask.bool()
+            # pair valid if both tokens valid
+            pair_valid = mask.unsqueeze(2) & mask.unsqueeze(1)  # [B, N, N]
+            # expand over heads
+            pair_valid = pair_valid.unsqueeze(1).expand(B, H, N, N)
+            pair_valid = pair_valid.reshape(B * H, N, N)        # [B*H, N, N]
+
+            # where invalid, set to -inf
+            big_neg = torch.finfo(q.dtype).min
+            attn_mask = torch.where(
+                pair_valid,
+                torch.zeros_like(pair_valid, dtype=q.dtype),
+                torch.full_like(pair_valid, big_neg, dtype=q.dtype),
+            )  # [B*H, N, N]
+
+        # --- 4) Scaled dot-product attention ---
+        # q,k,v: [B*H, N, dh]
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=False,
+        )  # [B*H, N, dh]
+
+        # --- 5) Merge heads back ---
+        attn_out = attn_out.reshape(B, H, N, dh).transpose(1, 2)  # [B, N, H, dh]
+        attn_out = attn_out.reshape(B, N, self.d_model)           # [B, N, D]
+
+        out = self.out_proj(attn_out)                             # [B, N, D]
+        out = self.dropout(out)
+        return out

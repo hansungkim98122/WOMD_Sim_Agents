@@ -1,4 +1,4 @@
-batch_size: 1024
+batch_size: 48
 learning_rate: 5e-4
 epochs: 32
 model_save_freq: 4
