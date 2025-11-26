@@ -5,7 +5,7 @@ import tensorflow as tf
 import os
 from tqdm import tqdm
 from waymo_open_dataset.protos import scenario_pb2
-from agent_motion_tokenizer import AgentMotionTokenizer
+from tokens.agent_motion_tokenizer import AgentMotionTokenizer
 
 
 if __name__ == '__main__':

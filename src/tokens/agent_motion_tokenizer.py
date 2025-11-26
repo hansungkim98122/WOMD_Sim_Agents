@@ -1,7 +1,44 @@
-from tokenizer import Tokenizer
+from tokens.tokenizer import Tokenizer
 import numpy as np
 from waymo_open_dataset.protos import scenario_pb2
 import matplotlib.pyplot as plt
+import pickle
+from typing import Dict, Optional, Tuple
+
+
+SMART_AGENT_TYPE_KEY = {
+    1: "veh",
+    2: "ped",
+    3: "cyc",
+}
+
+
+def _contours_from_traj(traj: np.ndarray,
+                        length: float,
+                        width: float) -> np.ndarray:
+    """
+    Convert an agent-centric trajectory [L,3] (x, y, yaw) into a sequence of
+    polygon contours [L,4,2] using fixed length/width boxes.
+    """
+    x = traj[:, 0]
+    y = traj[:, 1]
+    theta = traj[:, 2]
+
+    lf_x = x + 0.5 * length * np.cos(theta) - 0.5 * width * np.sin(theta)
+    lf_y = y + 0.5 * length * np.sin(theta) + 0.5 * width * np.cos(theta)
+    rf_x = x + 0.5 * length * np.cos(theta) + 0.5 * width * np.sin(theta)
+    rf_y = y + 0.5 * length * np.sin(theta) - 0.5 * width * np.cos(theta)
+    rb_x = x - 0.5 * length * np.cos(theta) + 0.5 * width * np.sin(theta)
+    rb_y = y - 0.5 * length * np.sin(theta) - 0.5 * width * np.cos(theta)
+    lb_x = x - 0.5 * length * np.cos(theta) - 0.5 * width * np.sin(theta)
+    lb_y = y - 0.5 * length * np.sin(theta) + 0.5 * width * np.cos(theta)
+
+    lf = np.stack([lf_x, lf_y], axis=-1)
+    rf = np.stack([rf_x, rf_y], axis=-1)
+    rb = np.stack([rb_x, rb_y], axis=-1)
+    lb = np.stack([lb_x, lb_y], axis=-1)
+
+    return np.stack([lf, rf, rb, lb], axis=1).astype(np.float32)
 
 
 # Map Waymo Track types to tokenizer agent types
@@ -151,6 +188,50 @@ class AgentMotionTokenizer(Tokenizer):
     def decode_token(self, token_idx: int, agent_type: int) -> np.ndarray:
         """Return the trajectory for a given token (np.ndarray [L, 3])."""
         return self.vocab[agent_type][token_idx]
+
+    # ------------------------------------------------------------------
+    # SMART-compatible export helpers
+    # ------------------------------------------------------------------
+
+    def export_smart_tokens(self,
+                            dims: Optional[Dict[int, Tuple[float, float]]] = None
+                            ) -> Dict[str, Dict[str, np.ndarray]]:
+        """
+        Convert TrajTok vocab to the SMART TokenProcessor format:
+          { 'token': {veh/ped/cyc: [K,4,2]}, 'token_all': {veh/ped/cyc: [K,L,4,2]} }.
+        """
+        if not self.vocab:
+            raise RuntimeError("No vocabulary to export. Run build_vocabulary_from_scenarios first.")
+
+        default_dims = {
+            1: (4.8, 2.0),
+            3: (2.0, 1.0),
+            2: (1.0, 1.0),
+        }
+        dims = dims or default_dims
+
+        token = {}
+        token_all = {}
+        for agent_type, trajs in self.vocab.items():
+            if trajs is None or len(trajs) == 0:
+                continue
+            key = SMART_AGENT_TYPE_KEY.get(agent_type)
+            if key is None:
+                continue
+            length, width = dims.get(agent_type, default_dims[1])
+            contours = np.stack([_contours_from_traj(traj, length, width) for traj in trajs], axis=0)
+            token_all[key] = contours.astype(np.float32)
+            token[key] = contours[:, 0].astype(np.float32)
+
+        return {"token": token, "token_all": token_all}
+
+    def save_smart_tokens(self,
+                          path: str,
+                          dims: Optional[Dict[int, Tuple[float, float]]] = None) -> None:
+        """Save SMART-format pickle usable by preprocess/tokenizer.py."""
+        payload = self.export_smart_tokens(dims=dims)
+        with open(path, "wb") as f:
+            pickle.dump(payload, f)
 
     # ------------------------------------------------------------------
     # VISUALIZATION (like Figure 1b)
@@ -568,7 +649,10 @@ if __name__ == "__main__":
     tok.build_vocabulary_from_scenarios(dataset_iterator)
 
     # Save vocab for later
-    np.savez("../token_vocabs/trajtok_vocab.npz",
+    np.savez("trajtok_vocab.npz",
             vehicle=tok.vocab.get(1),
             pedestrian=tok.vocab.get(2),
             cyclist=tok.vocab.get(3))
+
+    # Optional SMART-format export for preprocess/tokenizer.py
+    tok.save_smart_tokens("cluster_frame_5_2048.pkl")

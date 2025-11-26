@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
-from road_vector_tokenizer import RoadVectorTokenizer
-from agent_motion_tokenizer import AgentMotionTokenizer
+from tokens.road_vector_tokenizer import RoadVectorTokenizer
+from tokens.agent_motion_tokenizer import AgentMotionTokenizer
 from waymo_open_dataset.protos import scenario_pb2
 import tensorflow as tf
 import os

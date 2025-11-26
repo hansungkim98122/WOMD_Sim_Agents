@@ -1,6 +1,7 @@
-from tokenizer import Tokenizer
+from tokens.tokenizer import Tokenizer
 import numpy as np
 import torch as th
+import pickle
 from waymo_open_dataset.protos import map_pb2, scenario_pb2
 
 
@@ -151,7 +152,7 @@ class RoadVectorTokenizer(Tokenizer):
                                         current_step_index: int = 10,
                                         center_offset=None,
                                         rotate: bool = True,
-                                        max_scenarios: int | None = None,
+                                        max_scenarios: int = 1000,
                                         max_vectors_total: int = 300_000,
                                         kmeans_iters: int = 20,
                                         random_state: int = 0):
@@ -219,13 +220,36 @@ class RoadVectorTokenizer(Tokenizer):
         print(f"[RoadVectorTokenizer] Built vocab with {self.vocab.shape[0]} tokens "
               f"from {n_vec} vectors ({n_scen} scenarios).")
 
+    def save_smart_tokens(self, path: str) -> None:
+        """
+        Save vocab in SMART TokenProcessor map format (traj_src key).
+        """
+        if self.vocab is None:
+            raise RuntimeError("Vocabulary not built or loaded yet.")
+        payload = {"traj_src": np.asarray(self.vocab, dtype=np.float32)}
+        with open(path, "wb") as f:
+            pickle.dump(payload, f)
+
+    def load_smart_tokens(self, path: str) -> None:
+        """
+        Load SMART-format map tokens and rebuild normalization stats.
+        """
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        if "traj_src" not in data:
+            raise ValueError("Expected key 'traj_src' in SMART map token pickle.")
+        self.vocab = np.asarray(data["traj_src"], dtype=np.float32)
+        self.vocab_mean = self.vocab.mean(axis=0, keepdims=True)
+        self.vocab_std = self.vocab.std(axis=0, keepdims=True) + 1e-6
+        self._vocab_norm = (self.vocab - self.vocab_mean) / self.vocab_std
+
     # -------------------------------------------------------------------------
     # ENCODING (CONTINUOUS → DISCRETE)
     # -------------------------------------------------------------------------
 
     def encode(self,
-               vectors: th.Tensor | np.ndarray,
-               mask: th.Tensor | np.ndarray | None = None,
+               vectors: th.Tensor,
+               mask: th.Tensor = None,
                pad_token_id: int = 0) -> th.Tensor:
         """
         Map continuous road vectors to nearest vocabulary token IDs.
@@ -571,10 +595,5 @@ if __name__ == "__main__":
         random_state=0,
     )
 
-    # Save vocab to disk for reuse
-    np.savez(
-        "../token_vocabs/road_vocab_smart.npz",
-        vocab=tokenizer.vocab,
-        mean=tokenizer.vocab_mean,
-        std=tokenizer.vocab_std,
-    )
+    #pickle dump
+    tokenizer.save_smart_tokens("map_traj_token5.pkl")

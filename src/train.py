@@ -6,12 +6,12 @@ import tensorflow_datasets as tfds
 from torch.utils.tensorboard import SummaryWriter
 import logging
 from waymo_open_dataset.metrics.python import config_util_py as config_util
-from train_utils import get_savedirs, default_metrics_config, parse, train_step, cross_validation
-from eval_utils import MotionMetrics
-from dataset_utils import load_dataset, visualize_scenario_sim_agents
+from utils.train_utils import get_savedirs, default_metrics_config, parse, train_step, cross_validation
+from utils.eval_utils import MotionMetrics
+from utils.dataset_utils import load_dataset, visualize_scenario_sim_agents
 from tqdm import tqdm
 from waymo_open_dataset.utils.sim_agents import submission_specs
-from road_vector_tokenizer import RoadVectorTokenizer   
+from tokens.road_vector_tokenizer import RoadVectorTokenizer   
 
 log = logging.getLogger(__name__)
 tfds.display_progress_bar(enable=True)

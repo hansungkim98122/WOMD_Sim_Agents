@@ -184,7 +184,7 @@ if __name__ == "__main__":
     from waymo_open_dataset.protos import scenario_pb2
     import glob
     import os
-    from road_vector_tokenizer import RoadVectorTokenizer
+    from tokens.road_vector_tokenizer import RoadVectorTokenizer
 
     DATASET_FOLDER = '/home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/uncompressed/scenario/'
     VALIDATION_FILES = os.path.join(DATASET_FOLDER, 'validation/*.tfrecord*') 

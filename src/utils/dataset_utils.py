@@ -3,7 +3,7 @@ from waymo_open_dataset.protos import scenario_pb2
 from matplotlib import cm
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
-from train_utils import womd_scenario2tfexample
+from utils.train_utils import womd_scenario2tfexample
 import os
 import numpy as np
 import tensorflow as tf

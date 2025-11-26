@@ -3,11 +3,10 @@ import pickle
 from typing import Callable, List, Optional, Tuple, Union
 import pandas as pd
 from torch_geometric.data import Dataset
-from smart.utils.log import Logging
 import numpy as np
-from tokenizer import TokenProcessor
-
-
+from dataset.token_processor import TokenProcessor
+from utils.logging import Logging
+    
 def distance(point1, point2):
     return np.sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
 

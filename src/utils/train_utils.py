@@ -5,7 +5,7 @@ import torch as th
 from datetime import datetime
 import os
 from tqdm import tqdm
-from eval_utils import scenario_rollout_generation
+from utils.eval_utils import scenario_rollout_generation
 from waymo_open_dataset.wdl_limited.sim_agents_metrics import metric_features
 from waymo_open_dataset.wdl_limited.sim_agents_metrics import metrics
 from waymo_open_dataset.utils.sim_agents import submission_specs
