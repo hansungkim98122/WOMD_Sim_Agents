@@ -3,7 +3,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
-from smart.utils import weight_init
+from utils.weight_init import weight_init
 
 
 class FourierEmbedding(nn.Module):

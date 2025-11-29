@@ -1,0 +1,16 @@
+2025-11-28 22:43:02,079-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 22:45:49,077-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 22:46:42,138-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 22:58:08,435-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:36:43,352-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:36:43,359-DEBUG-dataset.py-Line:60-Message:The number of train dataset is 15041
+2025-11-28 23:36:43,362-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:36:43,382-DEBUG-dataset.py-Line:60-Message:The number of val dataset is 44097
+2025-11-28 23:36:43,385-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:36:43,385-DEBUG-dataset.py-Line:60-Message:The number of test dataset is 0
+2025-11-28 23:37:39,550-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:37:39,557-DEBUG-dataset.py-Line:60-Message:The number of train dataset is 15041
+2025-11-28 23:37:39,559-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:37:39,579-DEBUG-dataset.py-Line:60-Message:The number of val dataset is 44097
+2025-11-28 23:37:39,581-DEBUG-dataset.py-Line:37-Message:Starting loading dataset
+2025-11-28 23:37:39,581-DEBUG-dataset.py-Line:60-Message:The number of test dataset is 0

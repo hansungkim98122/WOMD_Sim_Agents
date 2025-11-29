@@ -1,4 +1,4 @@
-from tokens.tokenizer import Tokenizer
+from tokenizer import Tokenizer
 import numpy as np
 from waymo_open_dataset.protos import scenario_pb2
 import matplotlib.pyplot as plt
@@ -70,25 +70,34 @@ class AgentMotionTokenizer(Tokenizer):
         2: 3001,  # pedestrians
         3: 2798,  # cyclists
     }
-
     def __init__(self,
                  traj_len_steps: int = 5,
                  waymo_dt: float = 0.1,
-                 random_state: int = 0):
+                 random_state: int = 0,
+                 max_scenarios: Optional[int] = None,
+                 max_trajs_per_type: int = 200_000):
         """
         Args:
-            traj_len_steps: L, number of 0.1s steps in each token trajectory (default 5 → 0.5s).
+            traj_len_steps: L, number of 0.1s steps in each token trajectory.
             waymo_dt: time step of the raw Waymo trajectories (0.1s).
             random_state: seed for k-means in sparsification.
+            max_scenarios: optional hard cap on scenarios to scan.
+            max_trajs_per_type: max number of 0.5s windows to keep per agent type
+                                (we use reservoir sampling to enforce this).
         """
         super().__init__()
         self.traj_len = traj_len_steps
         self.waymo_dt = waymo_dt
         self.rng = np.random.default_rng(random_state)
 
+        self.max_scenarios = max_scenarios
+        self.max_trajs_per_type = max_trajs_per_type
+
+
         # Per-type vocabulary: {agent_type: np.ndarray[num_tokens, L, 3] (x, y, yaw)}
-        self.vocab = {}
-        self.vocab_endpoints = {}
+        self.vocab: Dict[int, np.ndarray] = {}
+        # Cached endpoints (x,y of final frame) per type: {agent_type: [K,2]}
+        self.vocab_endpoints: Dict[int, np.ndarray] = {}
 
         # ---------------- TrajTok grid / filter parameters per type ----------------
         self.GRID_PARAMS = {
@@ -121,38 +130,71 @@ class AgentMotionTokenizer(Tokenizer):
             scenarios: iterable of Waymo `scenario_pb2.Scenario` protos,
                        raw serialized bytes, or tfds-style dicts.
         """
+        print("[AgentMotionTokenizer] Starting vocabulary build from scenarios...")
         per_type_trajs = {1: [], 2: [], 3: []}
+        # Total number of trajectories *seen* per type (before subsampling)
+        per_type_counts = {1: 0, 2: 0, 3: 0}
 
+        scenario_count = 0
         for item in scenarios:
-            scenario = self._ensure_scenario(item)
-            self._collect_trajs_from_scenario(scenario, per_type_trajs)
+            scenario_count += 1
 
+            if self.max_scenarios is not None and scenario_count > self.max_scenarios:
+                print(f"[AgentMotionTokenizer] Reached max_scenarios={self.max_scenarios}, stopping scan.")
+                break
+
+            if scenario_count % 500 == 0:
+                print(f"[AgentMotionTokenizer] Processed {scenario_count} scenarios so far...")
+                print("  Seen trajs so far:",
+                      {t: per_type_counts[t] for t in (1, 2, 3)},
+                      "  Kept in memory:",
+                      {t: len(per_type_trajs[t]) for t in (1, 2, 3)})
+
+            scenario = self._ensure_scenario(item)
+            self._collect_trajs_from_scenario(scenario, per_type_trajs, per_type_counts)
+
+            # If we've filled all type buckets, we can optionally stop early
+            if (self.max_trajs_per_type is not None
+                and all(per_type_counts[t] >= self.max_trajs_per_type for t in (1, 2, 3))):
+                print("[AgentMotionTokenizer] Reached max_trajs_per_type for all types. Stopping scan.")
+                break
+
+        print(f"[AgentMotionTokenizer] Finished scanning {scenario_count} scenarios.")
+        for t in (1, 2, 3):
+            print(f"[AgentMotionTokenizer] Seen total {per_type_counts[t]} trajs for type {t}, "
+                  f"kept {len(per_type_trajs[t])} in memory.")
+
+        # Per-type vocab building + sparsification
         for agent_type, trajs in per_type_trajs.items():
             if len(trajs) == 0:
                 print(f"[AgentMotionTokenizer] No trajectories for agent_type={agent_type}, skipping.")
                 continue
 
+            print(f"[AgentMotionTokenizer] Building dense vocab for agent_type={agent_type}...")
             params = self.GRID_PARAMS[agent_type]
             D = np.asarray(trajs, dtype=np.float32)
 
-            # Build dense TrajTok vocabulary for this type
             dense_vocab = self._build_vocab_for_type(D, params)
+            print(f"[AgentMotionTokenizer] Dense vocab for type {agent_type} has {dense_vocab.shape[0]} tokens.")
 
-            # Sparsify to target size (if needed)
             target_K = self.TARGET_VOCAB_SIZE.get(agent_type, None)
             if target_K is not None and dense_vocab.shape[0] > target_K:
+                print(f"[AgentMotionTokenizer] Sparsifying type {agent_type} "
+                      f"{dense_vocab.shape[0]} → {target_K} via k-means on endpoints...")
                 vocab = self._sparsify_vocab(dense_vocab, target_K)
-                print(f"[AgentMotionTokenizer] Dense vocab type {agent_type}: "
-                      f"{dense_vocab.shape[0]} → sparsified to {vocab.shape[0]}")
+                print(f"[AgentMotionTokenizer] Done sparsifying type {agent_type}: "
+                      f"{dense_vocab.shape[0]} → {vocab.shape[0]}")
             else:
                 vocab = dense_vocab
-                print(f"[AgentMotionTokenizer] Dense vocab type {agent_type}: "
-                      f"{dense_vocab.shape[0]} (no sparsification)")
+                print(f"[AgentMotionTokenizer] No sparsification needed for type {agent_type}.")
 
             self.vocab[agent_type] = vocab
             self.vocab_endpoints[agent_type] = vocab[:, -1, 0:2]
 
             print(f"[AgentMotionTokenizer] Final vocab type {agent_type} with {vocab.shape[0]} tokens.")
+
+        print("[AgentMotionTokenizer] Vocabulary build complete for all agent types.")
+
 
     def encode(self, traj_local: np.ndarray, agent_type: int):
         """
@@ -198,40 +240,83 @@ class AgentMotionTokenizer(Tokenizer):
                             ) -> Dict[str, Dict[str, np.ndarray]]:
         """
         Convert TrajTok vocab to the SMART TokenProcessor format:
-          { 'token': {veh/ped/cyc: [K,4,2]}, 'token_all': {veh/ped/cyc: [K,L,4,2]} }.
+
+          token:     (tokens, 4, 2)
+          traj:      (tokens, 6, 3)     # x, y, heading
+          token_all: (tokens, 6, 4, 2)  # 6 frames, 4 corners, x/y
+
+        We always use the first 6 frames of each trajectory. If the stored
+        TrajTok vocab has L < 6, we pad by repeating the last frame.
         """
         if not self.vocab:
             raise RuntimeError("No vocabulary to export. Run build_vocabulary_from_scenarios first.")
 
+        print("[AgentMotionTokenizer] Exporting SMART-format tokens...")
+
+        # Default length/width per agent type
         default_dims = {
-            1: (4.8, 2.0),
-            3: (2.0, 1.0),
-            2: (1.0, 1.0),
+            1: (4.8, 2.0),  # vehicle
+            3: (2.0, 1.0),  # cyclist
+            2: (1.0, 1.0),  # pedestrian
         }
         dims = dims or default_dims
 
-        token = {}
-        token_all = {}
+        token: Dict[str, np.ndarray] = {}
+        traj: Dict[str, np.ndarray] = {}
+        token_all: Dict[str, np.ndarray] = {}
+
+        NUM_FRAMES = 6  # SMART spec: use first 6 frames
+
         for agent_type, trajs in self.vocab.items():
             if trajs is None or len(trajs) == 0:
+                print(f"[AgentMotionTokenizer] export_smart_tokens: no tokens for type {agent_type}, skipping.")
                 continue
+
             key = SMART_AGENT_TYPE_KEY.get(agent_type)
             if key is None:
+                print(f"[AgentMotionTokenizer] export_smart_tokens: unknown SMART key for type {agent_type}, skipping.")
                 continue
-            length, width = dims.get(agent_type, default_dims[1])
-            contours = np.stack([_contours_from_traj(traj, length, width) for traj in trajs], axis=0)
-            token_all[key] = contours.astype(np.float32)
-            token[key] = contours[:, 0].astype(np.float32)
 
-        return {"token": token, "token_all": token_all}
+            length, width = dims.get(agent_type, default_dims[1])
+
+            # trajs: [K, L, 3]  (x, y, yaw)
+            trajs = np.asarray(trajs, dtype=np.float32)
+            K, L, D = trajs.shape
+            assert D == 3, f"Expected traj dim 3 (x,y,yaw), got {D}"
+
+            print(f"[AgentMotionTokenizer] Exporting type {agent_type} ({key}): K={K}, L={L}")
+
+            # Build 6-frame trajectories: [K, 6, 3]
+            traj6 = np.zeros((K, NUM_FRAMES, 3), dtype=np.float32)
+
+            if L >= NUM_FRAMES:
+                traj6[:, :, :] = trajs[:, :NUM_FRAMES, :]
+            else:
+                traj6[:, :L, :] = trajs
+                traj6[:, L:, :] = trajs[:, -1:, :]
+
+            # Contours from these 6-frame trajectories: [K, 6, 4, 2]
+            contours6 = np.stack(
+                [_contours_from_traj(traj6[k], length, width) for k in range(K)],
+                axis=0
+            ).astype(np.float32)
+
+            token[key] = contours6[:, 0]        # first frame's box: [K, 4, 2]
+            traj[key] = traj6                   # [K, 6, 3]
+            token_all[key] = contours6          # [K, 6, 4, 2]
+
+        print("[AgentMotionTokenizer] SMART-format export complete.")
+        return {"token": token, "traj": traj, "token_all": token_all}
 
     def save_smart_tokens(self,
                           path: str,
                           dims: Optional[Dict[int, Tuple[float, float]]] = None) -> None:
         """Save SMART-format pickle usable by preprocess/tokenizer.py."""
+        print(f"[AgentMotionTokenizer] Saving SMART tokens to {path}...")
         payload = self.export_smart_tokens(dims=dims)
         with open(path, "wb") as f:
             pickle.dump(payload, f)
+        print(f"[AgentMotionTokenizer] Saved SMART tokens to {path}.")
 
     # ------------------------------------------------------------------
     # VISUALIZATION (like Figure 1b)
@@ -263,6 +348,8 @@ class AgentMotionTokenizer(Tokenizer):
         V = self.vocab[agent_type]  # [K, L, 3]
         K, L, _ = V.shape
 
+        print(f"[AgentMotionTokenizer] Visualizing vocab for agent_type={agent_type} with K={K} tokens...")
+
         fig, ax = plt.subplots(figsize=figsize)
 
         for k in range(K):
@@ -290,6 +377,7 @@ class AgentMotionTokenizer(Tokenizer):
 
         if save_path is not None:
             plt.savefig(save_path, bbox_inches="tight", dpi=200)
+            print(f"[AgentMotionTokenizer] Saved vocabulary visualization to {save_path}.")
         plt.show()
 
     # ------------------------------------------------------------------
@@ -312,6 +400,8 @@ class AgentMotionTokenizer(Tokenizer):
                 scen_bytes = item["scenario"]
             else:
                 raise TypeError(f"Dict missing 'scenario/bytes' key: {item.keys()}")
+            if hasattr(scen_bytes, "numpy"):
+                scen_bytes = scen_bytes.numpy()
             if isinstance(scen_bytes, np.ndarray):
                 scen_bytes = scen_bytes.item()
             s = scenario_pb2.Scenario()
@@ -319,8 +409,12 @@ class AgentMotionTokenizer(Tokenizer):
             return s
 
         raise TypeError(f"Unsupported scenario item type: {type(item)}")
-
-    def _collect_trajs_from_scenario(self, scenario, per_type_trajs):
+   
+    def _collect_trajs_from_scenario(self, scenario, per_type_trajs, per_type_counts):
+        """
+        Extract all length-L agent-centric windows from a scenario and feed them
+        into per-type reservoirs.
+        """
         L = self.traj_len
 
         for track in scenario.tracks:
@@ -339,7 +433,40 @@ class AgentMotionTokenizer(Tokenizer):
                     continue
 
                 traj_local = self._make_agent_centric_traj(window)
-                per_type_trajs[agent_type].append(traj_local)
+                self._reservoir_add_trajectory(agent_type,
+                                               traj_local,
+                                               per_type_trajs,
+                                               per_type_counts)
+
+    def _reservoir_add_trajectory(self,
+                                  agent_type: int,
+                                  traj_local: np.ndarray,
+                                  per_type_trajs: Dict[int, list],
+                                  per_type_counts: Dict[int, int]) -> None:
+        """
+        Reservoir sampling for trajectories per agent_type.
+
+        - per_type_counts[agent_type]: total number of trajs SEEN so far.
+        - per_type_trajs[agent_type]: list of KEPT trajs, capped at max_trajs_per_type.
+        """
+        c = per_type_counts[agent_type]
+        per_type_counts[agent_type] = c + 1
+
+        limit = self.max_trajs_per_type
+        if limit is None:
+            # Unlimited: just append (not recommended for memory)
+            per_type_trajs[agent_type].append(traj_local)
+            return
+
+        # If we haven't filled the reservoir yet, just append
+        if len(per_type_trajs[agent_type]) < limit:
+            per_type_trajs[agent_type].append(traj_local)
+            return
+
+        # Reservoir sampling: replace existing item with prob = limit / (c+1)
+        j = self.rng.integers(0, c + 1)
+        if j < limit:
+            per_type_trajs[agent_type][j] = traj_local
 
     def _make_agent_centric_traj(self, window):
         L = len(window)
@@ -384,26 +511,41 @@ class AgentMotionTokenizer(Tokenizer):
         Returns:
             dense_vocab: np.ndarray [K_full, L, 3]
         """
+        print(f"[AgentMotionTokenizer] _build_vocab_for_type: starting with {D.shape[0]} trajectories, "
+              f"L={D.shape[1]}")
+        # 1) Flip trajectories in y / yaw to enforce left-right symmetry
         D_flipped = self._flip_trajectories(D)
         De = np.concatenate([D, D_flipped], axis=0)
+        print(f"[AgentMotionTokenizer] _build_vocab_for_type: after flip/aug, {De.shape[0]} trajectories.")
 
+        # 2) Use endpoints (x_L, y_L) for gridding
         endpoints = De[:, -1, 0:2]
 
         (cell_indices,
          Ntraj,
          B_init) = self._grid_and_preselect(endpoints, params)
+        print("[AgentMotionTokenizer] _build_vocab_for_type: gridding complete.")
 
+        # 3) Filter and expand active cells
         B_hat = self._filter_and_expand(B_init, params)
+        num_active = int(B_hat.sum())
+        print(f"[AgentMotionTokenizer] _build_vocab_for_type: {num_active} active cells after filtering/expansion.")
 
+        # 4) Generate one token per active cell
         dense_tokens = self._generate_tokens_from_grid(
             De, cell_indices, Ntraj, B_hat, params
         )
+        print(f"[AgentMotionTokenizer] _build_vocab_for_type: generated {len(dense_tokens)} dense tokens.")
 
         return np.asarray(dense_tokens, dtype=np.float32)
 
     # ------------------- helpers: Step 1 -------------------
 
     def _flip_trajectories(self, D: np.ndarray) -> np.ndarray:
+        """
+        Flip trajectories across the x-axis (y → -y, yaw → -yaw) to exploit
+        left-right symmetry.
+        """
         D_flipped = D.copy()
         D_flipped[..., 1] = -D_flipped[..., 1]
         D_flipped[..., 2] = -D_flipped[..., 2]
@@ -442,6 +584,9 @@ class AgentMotionTokenizer(Tokenizer):
     # ------------------- helpers: Step 3 -------------------
 
     def _filter_and_expand(self, B: np.ndarray, params: dict) -> np.ndarray:
+        """
+        Apply neighborhood-based filter/expansion to get final active cells B_hat.
+        """
         k = params["k"]
         sa = params["sa"]
         sr = params["sr"]
@@ -540,6 +685,9 @@ class AgentMotionTokenizer(Tokenizer):
                                   p_end: np.ndarray,
                                   yaw_end: float,
                                   L: int) -> np.ndarray:
+        """
+        Simple linear interpolation from origin to p_end with constant yaw_end.
+        """
         token = np.zeros((L, 3), dtype=np.float32)
         if L == 1:
             token[0, 0:2] = p_end
@@ -572,6 +720,8 @@ class AgentMotionTokenizer(Tokenizer):
         if target_K >= K_full:
             return tokens
 
+        print(f"[AgentMotionTokenizer] _sparsify_vocab: K_full={K_full}, target_K={target_K}")
+
         # Use endpoints as clustering features
         E = tokens[:, -1, 0:2]  # [K_full, 2]
         centers, labels = self._kmeans_2d(E, target_K)
@@ -583,7 +733,6 @@ class AgentMotionTokenizer(Tokenizer):
             if np.any(mask):
                 new_tokens[k] = tokens[mask].mean(axis=0)
             else:
-                # Rare corner case: no points assigned -> pick nearest original
                 d2 = ((E - centers[k]) ** 2).sum(axis=1)
                 idx = int(d2.argmin())
                 new_tokens[k] = tokens[idx]
@@ -614,11 +763,11 @@ class AgentMotionTokenizer(Tokenizer):
             diff = X - centers[c - 1]
             d2 = (diff ** 2).sum(axis=1)
             closest_d2 = np.minimum(closest_d2, d2)
-            probs = closest_d2 / closest_d2.sum()
+            probs = closest_d2 / (closest_d2.sum() + 1e-12)
             idx = rng.choice(N, p=probs)
             centers[c] = X[idx]
 
-        for _ in range(iters):
+        for it in range(iters):
             diff = X[:, None, :] - centers[None, :, :]
             d2 = (diff ** 2).sum(axis=2)
             labels = d2.argmin(axis=1)
@@ -628,7 +777,11 @@ class AgentMotionTokenizer(Tokenizer):
                 if np.any(mask):
                     centers[c] = X[mask].mean(axis=0)
 
+            if (it + 1) % 5 == 0:
+                print(f"[AgentMotionTokenizer] _kmeans_2d: iteration {it+1}/{iters} complete.")
+
         return centers, labels
+
 
 if __name__ == "__main__":
     import os
@@ -636,23 +789,29 @@ if __name__ == "__main__":
     import tensorflow as tf
 
     DATASET_FOLDER = '/home/hansung/end2end_ad/datasets/waymo_open_dataset_motion_v_1_3_0/uncompressed/scenario/'
-    VALIDATION_FILES = os.path.join(DATASET_FOLDER, 'validation/validation.tfrecord*')
-    filenames = tf.io.matching_files(VALIDATION_FILES)
+    TRAIN_FILES = os.path.join(DATASET_FOLDER, 'training/training.tfrecord*')
+    filenames = tf.io.matching_files(TRAIN_FILES)
     dataset = tf.data.TFRecordDataset(filenames)
     dataset_iterator = dataset.as_numpy_iterator()
-    # bytes_example = next(dataset_iterator)
 
-    # scenario = scenario_pb2.Scenario.FromString(bytes_example)
+    print("[AgentMotionTokenizer] Main: creating tokenizer...")
+    tok = AgentMotionTokenizer(
+        traj_len_steps=5,
+        waymo_dt=0.1,
+        random_state=0,
+        max_scenarios=50_000,        # or None if you just want to rely on traj cap
+        max_trajs_per_type=500_000,  
+    )
 
-    # Suppose `train_scenarios` is an iterable of Scenario protos
-    tok = AgentMotionTokenizer(traj_len_steps=5, waymo_dt=0.1)
+    print("[AgentMotionTokenizer] Main: building vocabulary from training scenarios...")
     tok.build_vocabulary_from_scenarios(dataset_iterator)
 
-    # Save vocab for later
-    np.savez("trajtok_vocab.npz",
-            vehicle=tok.vocab.get(1),
-            pedestrian=tok.vocab.get(2),
-            cyclist=tok.vocab.get(3))
+    # SMART-format export for preprocess/tokenizer.py
+    out_path = "tokens/cluster_frame_5_2048.pkl"
+    tok.save_smart_tokens(out_path)
+    print(f"[AgentMotionTokenizer] Main: SMART tokens saved to {out_path}.")
 
-    # Optional SMART-format export for preprocess/tokenizer.py
-    tok.save_smart_tokens("cluster_frame_5_2048.pkl")
+    # 3) Visualize
+    tok.visualize_vocabulary(agent_type=1, show_full_trajectory=False)  # vehicles
+    tok.visualize_vocabulary(agent_type=2)  # pedestrians
+    tok.visualize_vocabulary(agent_type=3)  # cyclists

@@ -663,10 +663,31 @@ from waymo_open_dataset.protos import scenario_pb2
 def wm2argo(file, dir_name, output_dir):
     file_path = os.path.join(dir_name, file)
     dataset = tf.data.TFRecordDataset(file_path, compression_type='', num_parallel_reads=3)
+    # if 'training' in dir_name:
+    #     FILES = os.path.join(file_path, 'training.tfrecord*')
+    # elif 'validation' in dir_name:
+    #     FILES = os.path.join(file_path, 'validation.tfrecord*')
+    # elif 'testing' in dir_name:
+    #     FILES = os.path.join(file_path, 'testing.tfrecord*')
+    # else:
+    #     NotImplementedError()
+
+    # filenames = tf.io.matching_files(FILES)
+    # dataset = tf.data.TFRecordDataset(filenames)
+    print(file_path)
+
+    dataset_iterator = dataset.as_numpy_iterator()
+    my_list = list(dataset_iterator)
+    print(len(my_list))
+
     for cnt, data in enumerate(dataset):
         print(cnt)
         scenario = scenario_pb2.Scenario()
-        scenario.ParseFromString(bytearray(data.numpy()))
+        # if isinstance(data, (bytes, bytearray)):
+        #     s = scenario_pb2.Scenario()
+        #     s.ParseFromString(item)
+        #     return s
+        scenario.ParseFromString(bytes(data.numpy()))
         save_infos = process_single_data(scenario) # pkl2mtr
         map_info = save_infos["map_infos"]
         track_info = save_infos['track_infos']

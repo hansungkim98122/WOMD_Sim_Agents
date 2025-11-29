@@ -163,8 +163,8 @@ class TokenProcessor:
 
     def __init__(self, token_size):
         module_dir = os.path.dirname(os.path.dirname(__file__))
-        self.agent_token_path = os.path.join(module_dir, f'tokens/cluster_frame_5_{token_size}.pkl')
-        self.map_token_traj_path = os.path.join(module_dir, 'tokens/map_traj_token5.pkl')
+        self.agent_token_path = os.path.join(module_dir, f'tokens/smart_cluster_frame_5_{token_size}.pkl')
+        self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
         self.noise = False
         self.disturb = False
         self.shift = 5

@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.utils import softmax
 
-from smart.utils import weight_init
+from utils.weight_init import weight_init
 
 
 class AttentionLayer(MessagePassing):

@@ -1,3 +1,7 @@
 datasets/
 waymo_sim_agents/
-
+tmp/
+src/dataset/__pycache__/
+src/model/__pycache__/
+src/utils/__pycache__/
+src/lightning_logs/
