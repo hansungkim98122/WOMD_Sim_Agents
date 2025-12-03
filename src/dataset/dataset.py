@@ -26,7 +26,8 @@ class MultiDataset(Dataset):
                  cluster: bool = False,
                  processor=None,
                  use_intention=False,
-                 token_size=512) -> None:
+                 token_size=512,
+                 smart_token: bool = True) -> None:
         self.logger = Logging().log(level='DEBUG')
         self.root = root
         self.well_done = [0]
@@ -58,7 +59,7 @@ class MultiDataset(Dataset):
         self.num_historical_steps = num_historical_steps
         self._num_samples = len(self._processed_file_names) - 1 if processed_dir is not None else len(self._raw_file_names)
         self.logger.debug("The number of {} dataset is ".format(split) + str(self._num_samples))
-        self.token_processor = TokenProcessor(2048)
+        self.token_processor = TokenProcessor(token_size,smart_token)
         super(MultiDataset, self).__init__(root=root, transform=transform, pre_transform=None, pre_filter=None)
 
     @property

@@ -54,7 +54,7 @@ class minADE(Metric):
         self.add_state('sum', default=torch.tensor(0.0), dist_reduce_fx='sum')
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
         self.max_guesses = max_guesses
-        self.eval_timestep = 70
+        self.eval_timestep = 80
 
     def update(self,
                pred: torch.Tensor,

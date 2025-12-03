@@ -70,9 +70,14 @@ class SMART(pl.LightningModule):
         self.vis_map = False
         self.noise = True
         module_dir = os.path.dirname(os.path.dirname(__file__))
-        self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
+        if model_config.use_smart_tokens:
+            self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
+            self.token_path = os.path.join(module_dir, 'tokens/smart_cluster_frame_5_2048.pkl')
+        else:
+            self.map_token_traj_path = os.path.join(module_dir, 'tokens/custom_map_traj_token5.pkl')
+            self.token_path = os.path.join(module_dir, 'tokens/custom_cluster_frame_5.pkl')
         self.init_map_token()
-        self.token_path = os.path.join(module_dir, 'tokens/smart_cluster_frame_5_2048.pkl')
+
         token_data = self.get_trajectory_token()
         self.encoder = SMARTDecoder(
             dataset=model_config.dataset,
@@ -91,16 +96,18 @@ class SMART(pl.LightningModule):
             time_span=model_config.decoder.time_span,
             map_token={'traj_src': self.map_token['traj_src']},
             token_data=token_data,
-            token_size=model_config.decoder.token_size
+            token_size=model_config.decoder.token_size,
+            smart_token=model_config.use_smart_tokens
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
         self.TokenCls = TokenCls(max_guesses=1)
+        self.MapTokenCls = TokenCls(max_guesses=1)
 
         self.test_predictions = dict()
         self.cls_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
         self.map_cls_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.inference_token = False
+        self.inference_token = model_config.inference
         self.rollout_num = 1
 
     def get_trajectory_token(self):
@@ -149,9 +156,17 @@ class SMART(pl.LightningModule):
         next_token_idx_gt = pred['next_token_idx_gt']
         next_token_eval_mask = pred['next_token_eval_mask']
         cls_loss = self.cls_loss(next_token_prob[next_token_eval_mask], next_token_idx_gt[next_token_eval_mask])
-        loss = cls_loss
+
+        #Compute Map token prediction cross-entropy loss
+        map_next_token_idx_gt = pred['map_next_token_idx_gt']
+        map_next_token_eval_mask = pred['map_next_token_eval_mask']
+        map_next_token_prob = pred['map_next_token_prob']
+        map_cls_loss = self.map_cls_loss(map_next_token_prob[map_next_token_eval_mask], map_next_token_idx_gt[map_next_token_eval_mask])
+
+        loss = cls_loss + map_cls_loss
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
         self.log('cls_loss', cls_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
+        self.log('map_cls_loss', map_cls_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
         return loss
 
     def validation_step(self,
@@ -167,10 +182,21 @@ class SMART(pl.LightningModule):
         next_token_eval_mask = pred['next_token_eval_mask']
         next_token_prob = pred['next_token_prob']
         cls_loss = self.cls_loss(next_token_prob[next_token_eval_mask], next_token_idx_gt[next_token_eval_mask])
-        loss = cls_loss
+
+        #Compute Map token prediction cross-entropy loss
+        map_next_token_idx_gt = pred['map_next_token_idx_gt'].to(self.device)
+        map_next_token_eval_mask = pred['map_next_token_eval_mask'].to(self.device)
+        map_next_token_prob = pred['map_next_token_prob'].to(self.device)
+        map_next_token_idx = pred['map_next_token_idx'].to(self.device)
+        map_cls_loss = self.map_cls_loss(map_next_token_prob[map_next_token_eval_mask], map_next_token_idx_gt[map_next_token_eval_mask])
+
+        loss = cls_loss + map_cls_loss
         self.TokenCls.update(pred=next_token_idx[next_token_eval_mask], target=next_token_idx_gt[next_token_eval_mask],
                         valid_mask=next_token_eval_mask[next_token_eval_mask])
-        self.log('val_cls_acc', self.TokenCls, prog_bar=True, on_step=False, on_epoch=True, batch_size=1, sync_dist=True)
+        self.MapTokenCls.update(pred=map_next_token_idx[map_next_token_eval_mask], target=map_next_token_idx_gt[map_next_token_eval_mask],
+                        valid_mask=map_next_token_eval_mask[map_next_token_eval_mask])
+        self.log('val_acc', self.TokenCls, prog_bar=True, on_step=False, on_epoch=True, batch_size=1, sync_dist=True)
+        self.log('map_val_acc', self.MapTokenCls, prog_bar=True, on_step=False, on_epoch=True, batch_size=1,sync_dist=True)
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=1, sync_dist=True)
 
         eval_mask = data['agent']['valid_mask'][:, self.num_historical_steps-1]  # * (data['agent']['category'] == 3)
@@ -193,8 +219,8 @@ class SMART(pl.LightningModule):
             self.minFDE.update(pred=pred_traj[eval_mask], target=gt[eval_mask], valid_mask=valid_mask[eval_mask])
             # print('ade: ', self.minADE.compute(), 'fde: ', self.minFDE.compute())
 
-            self.log('val_minADE', self.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=1)
-            self.log('val_minFDE', self.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=1)
+            self.log('val_mADE', self.minADE, prog_bar=True, on_step=False, on_epoch=True, batch_size=1)
+            self.log('val_mFDE', self.minFDE, prog_bar=True, on_step=False, on_epoch=True, batch_size=1)
 
     def on_validation_start(self):
         self.gt = []
@@ -211,8 +237,12 @@ class SMART(pl.LightningModule):
             return max(
                 0.0, 0.5 * (1.0 + math.cos(math.pi * (current_step - self.warmup_steps) / float(max(1, self.total_steps - self.warmup_steps))))
             )
-
-        lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+        if self.model_config.lr_scheduler == 'lambda':
+            lr_scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+        elif self.model_config.lr_scheduler == 'cosine':
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,self.model_config.total_steps*10000, self.lr/100)
+        else: 
+            NotImplementedError
         return [optimizer], [lr_scheduler]
 
     def load_params_from_file(self, filename, logger, to_cpu=False):

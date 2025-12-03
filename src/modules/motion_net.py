@@ -51,7 +51,8 @@ class MotionNet(nn.Module):
                  head_dim: int,
                  dropout: float,
                  token_data: Dict,
-                 token_size=512) -> None:
+                 token_size=512,
+                 smart_token: bool = True) -> None:
         super(MotionNet, self).__init__()
         self.dataset = dataset
         self.input_dim = input_dim
@@ -86,21 +87,53 @@ class MotionNet(nn.Module):
         self.token_emb_cyc = MLPEmbedding(input_dim=input_dim_token, hidden_dim=hidden_dim)
         self.fusion_emb = MLPEmbedding(input_dim=self.hidden_dim * 2, hidden_dim=self.hidden_dim)
 
+        # Temporal self attention (agent to itself)
         self.t_attn_layers = nn.ModuleList(
             [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
                             bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
         )
+        # map -> agent cross attention 
         self.pt2a_attn_layers = nn.ModuleList(
             [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
                             bipartite=True, has_pos_emb=True) for _ in range(num_layers)]
         )
+        # agent -> agent interaction cross attention (no cross temporal)
         self.a2a_attn_layers = nn.ModuleList(
             [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
                             bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
         )
-        self.token_size = token_size
-        self.token_predict_head = MLPLayer(input_dim=hidden_dim, hidden_dim=hidden_dim,
-                                           output_dim=self.token_size)
+        self.use_smart_tokens = smart_token
+        if self.use_smart_tokens:
+            self.token_size = token_size
+            self.token_predict_head = MLPLayer(input_dim=hidden_dim, hidden_dim=hidden_dim,
+                                            output_dim=self.token_size)
+            ## EXPERIMENT ##
+            self.token_predict_cyc_head = MLPLayer(input_dim=hidden_dim,
+                                                hidden_dim=hidden_dim,
+                                                output_dim=self.token_size)
+            self.token_predict_walker_head = MLPLayer(input_dim=hidden_dim,
+                                                hidden_dim=hidden_dim,
+                                                output_dim=self.token_size)
+        else:
+            self.class_token_size = {
+                'veh': 8040,
+                'ped': 3001,
+                'cyc': 2798,
+            }
+            self.class_offset = {
+                'veh': 0,
+                'ped': self.class_token_size['veh'],  # 8040
+                'cyc': self.class_token_size['veh'] + self.class_token_size['ped'],  # 8040 + 3001
+            }
+            self.global_token_size = sum(self.class_token_size.values())  # 13839
+            self.token_predict_head = MLPLayer(hidden_dim, hidden_dim,
+                                   output_dim=self.class_token_size['veh'])
+            self.token_predict_walker_head = MLPLayer(hidden_dim, hidden_dim,
+                                                    output_dim=self.class_token_size['ped'])
+            self.token_predict_cyc_head = MLPLayer(hidden_dim, hidden_dim,
+                                                output_dim=self.class_token_size['cyc'])
+
+        ##
         self.trajectory_token = token_data['token']
         self.trajectory_token_traj = token_data['traj']
         self.trajectory_token_all = token_data['token_all']
@@ -194,31 +227,37 @@ class MotionNet(nn.Module):
             return feat_a, agent_token_traj
 
     def agent_predict_next(self, data, agent_category, feat_a):
-        num_agent, num_step, traj_dim = data['agent']['token_pos'].shape
+        num_agent, num_step, _ = data['agent']['token_pos'].shape
         agent_type = data['agent']['type']
-        veh_mask = (agent_type == 0)  # * agent_category==3
-        cyc_mask = (agent_type == 2)  # * agent_category==3
-        ped_mask = (agent_type == 1)  # * agent_category==3
-        token_res = torch.zeros((num_agent, num_step, self.token_size), device=agent_category.device)
+
+        veh_mask = (agent_type == 0)
+        cyc_mask = (agent_type == 2)
+        ped_mask = (agent_type == 1)
+
+        token_res = torch.zeros((num_agent, num_step, self.token_size),
+                                device=feat_a.device, dtype=feat_a.dtype)
         token_res[veh_mask] = self.token_predict_head(feat_a[veh_mask])
         token_res[cyc_mask] = self.token_predict_cyc_head(feat_a[cyc_mask])
         token_res[ped_mask] = self.token_predict_walker_head(feat_a[ped_mask])
         return token_res
+
 
     def agent_predict_next_inf(self, data, agent_category, feat_a):
-        num_agent, traj_dim = feat_a.shape
+        num_agent, _ = feat_a.shape
         agent_type = data['agent']['type']
 
-        veh_mask = (agent_type == 0)  # * agent_category==3
-        cyc_mask = (agent_type == 2)  # * agent_category==3
-        ped_mask = (agent_type == 1)  # * agent_category==3
+        veh_mask = (agent_type == 0)
+        cyc_mask = (agent_type == 2)
+        ped_mask = (agent_type == 1)
 
-        token_res = torch.zeros((num_agent, self.token_size), device=agent_category.device)
+        token_res = torch.zeros((num_agent, self.token_size),
+                                device=feat_a.device, dtype=feat_a.dtype)
         token_res[veh_mask] = self.token_predict_head(feat_a[veh_mask])
         token_res[cyc_mask] = self.token_predict_cyc_head(feat_a[cyc_mask])
         token_res[ped_mask] = self.token_predict_walker_head(feat_a[ped_mask])
 
         return token_res
+
 
     def build_temporal_edge(self, pos_a, head_a, head_vector_a, num_agent, mask, inference_mask=None):
         pos_t = pos_a.reshape(-1, self.input_dim)
@@ -327,18 +366,74 @@ class MotionNet(nn.Module):
             feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
             feat_a = feat_a.reshape(-1, num_step,
                                     self.hidden_dim).transpose(0, 1).reshape(-1, self.hidden_dim)
+            # Each agent node attends to nearby map tokens and pulls in lane/road information.
             feat_a = self.pt2a_attn_layers[i]((map_enc['x_pt'].repeat_interleave(
                 repeats=num_step, dim=0).reshape(-1, num_step, self.hidden_dim).transpose(0, 1).reshape(
                     -1, self.hidden_dim), feat_a), r_pl2a, edge_index_pl2a)
             feat_a = self.a2a_attn_layers[i](feat_a, r_a2a, edge_index_a2a)
             feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
 
-        num_agent, num_step, hidden_dim, traj_num, traj_dim = agent_token_traj.shape
-        next_token_prob = self.token_predict_head(feat_a)
-        next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
-        _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)
+        # num_agent, num_step, hidden_dim, traj_num, traj_dim = agent_token_traj.shape
+        # next_token_prob = self.token_predict_head(feat_a)
+        # next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
+        # _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)
 
-        next_token_index_gt = agent_token_index.roll(shifts=-1, dims=1)
+        #EXPERIMENT
+        if self.use_smart_tokens:
+            num_agent, num_step, token_size, traj_num, traj_dim = agent_token_traj.shape
+
+            agent_type = data['agent']['type']  # (num_agent,)
+            veh_mask = (agent_type == 0)
+            ped_mask = (agent_type == 1)
+            cyc_mask = (agent_type == 2)
+
+            # (num_agent, num_step, token_size)
+            next_token_prob = torch.zeros(num_agent, num_step, self.token_size,
+                                        device=feat_a.device, dtype=feat_a.dtype)
+
+            # feat_a: (num_agent, num_step, hidden_dim)
+            # MLPLayer supports broadcasting over leading dims, so this should work:
+            next_token_prob[veh_mask] = self.token_predict_head(feat_a[veh_mask])
+            next_token_prob[ped_mask] = self.token_predict_walker_head(feat_a[ped_mask])
+            next_token_prob[cyc_mask] = self.token_predict_cyc_head(feat_a[cyc_mask])
+
+            next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
+            _, next_token_idx = torch.topk(next_token_prob_softmax, k=10, dim=-1)
+        else:
+            C = self.global_token_size
+            next_token_prob = torch.zeros(num_agent, num_step, C,
+                                        device=feat_a.device, dtype=feat_a.dtype)
+
+            veh_logits = self.token_predict_head(feat_a[veh_mask])      # (..., 8040)
+            ped_logits = self.token_predict_walker_head(feat_a[ped_mask])  # (..., 3001)
+            cyc_logits = self.token_predict_cyc_head(feat_a[cyc_mask])     # (..., 2798)
+
+            off_v = self.class_offset['veh']      # 0
+            off_p = self.class_offset['ped']      # 8040
+            off_c = self.class_offset['cyc']      # 8040 + 3001
+
+            next_token_prob[veh_mask, :, off_v:off_v + self.class_token_size['veh']] = veh_logits
+            next_token_prob[ped_mask, :, off_p:off_p + self.class_token_size['ped']] = ped_logits
+            next_token_prob[cyc_mask, :, off_c:off_c + self.class_token_size['cyc']] = cyc_logits
+
+        ########################3
+        if self.use_smart_tokens:
+            next_token_index_gt = agent_token_index.roll(shifts=-1, dims=1)
+        else:
+            agent_type = data['agent']['type']    # 0=veh, 1=ped, 2=cyc (from your code)
+
+            gt_global = torch.full_like(agent_token_index, -100)  # ignore index for empty
+
+            veh_mask = (agent_type == 0)
+            ped_mask = (agent_type == 1)
+            cyc_mask = (agent_type == 2)
+
+            gt_global[veh_mask] = agent_token_index[veh_mask] + off_v
+            gt_global[ped_mask] = agent_token_index[ped_mask] + off_p
+            gt_global[cyc_mask] = agent_token_index[cyc_mask] + off_c
+
+            next_token_index_gt = gt_global.roll(shifts=-1, dims=1)
+
         next_token_eval_mask = mask.clone()
         next_token_eval_mask = next_token_eval_mask * next_token_eval_mask.roll(shifts=-1, dims=1) * next_token_eval_mask.roll(shifts=1, dims=1)
         next_token_eval_mask[:, -1] = False
@@ -421,9 +516,13 @@ class MotionNet(nn.Module):
                 feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
                 feat_a = feat_a.reshape(-1, num_step,
                                         self.hidden_dim).transpose(0, 1).reshape(-1, self.hidden_dim)
+                #  repeat map encoding num_steps to match the dimension of the query feat_a
+                # Each agent node attends to nearby map tokens and pulls in lane/road information.
                 feat_a = self.pt2a_attn_layers[i]((map_enc['x_pt'].repeat_interleave(
                     repeats=num_step, dim=0).reshape(-1, num_step, self.hidden_dim).transpose(0, 1).reshape(
                         -1, self.hidden_dim), feat_a), r_pl2a, edge_index_pl2a)
+
+                # Agent -> agent cross attention to capture the interaction between agents
                 feat_a = self.a2a_attn_layers[i](feat_a, r_a2a, edge_index_a2a)
                 feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)
 
@@ -432,7 +531,23 @@ class MotionNet(nn.Module):
                 else:
                     feat_a_t_dict[i+1][:, (self.num_historical_steps - 1) // self.shift - 1 + t] = feat_a[:, (self.num_historical_steps - 1) // self.shift - 1 + t]
 
-            next_token_prob = self.token_predict_head(feat_a[:, (self.num_historical_steps - 1) // self.shift - 1 + t])
+            # next_token_prob = self.token_predict_head(feat_a[:, (self.num_historical_steps - 1) // self.shift - 1 + t])
+            # TODO: per category prediction head
+            t_idx = (self.num_historical_steps - 1) // self.shift - 1 + t
+            feat_t = feat_a[:, t_idx]  # (num_agent, hidden_dim)
+
+            agent_type = data['agent']['type']
+            veh_mask = (agent_type == 0)
+            ped_mask = (agent_type == 1)
+            cyc_mask = (agent_type == 2)
+
+            next_token_prob = torch.zeros(num_agent, self.token_size,
+                                        device=feat_a.device, dtype=feat_a.dtype)
+
+            next_token_prob[veh_mask] = self.token_predict_head(feat_t[veh_mask])
+            next_token_prob[ped_mask] = self.token_predict_walker_head(feat_t[ped_mask])
+            next_token_prob[cyc_mask] = self.token_predict_cyc_head(feat_t[cyc_mask])
+            ######
 
             next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
 

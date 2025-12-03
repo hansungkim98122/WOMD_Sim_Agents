@@ -64,7 +64,7 @@ class AgentMotionTokenizer(Tokenizer):
     then sparsify to target vocabulary sizes.
     """
 
-    # Target vocabulary sizes per SMART paper
+    # Target vocabulary sizes per TrajTok paper
     TARGET_VOCAB_SIZE = {
         1: 8040,  # vehicles
         2: 3001,  # pedestrians

@@ -5,3 +5,6 @@ src/dataset/__pycache__/
 src/model/__pycache__/
 src/utils/__pycache__/
 src/lightning_logs/
+src/tokens/*.pkl
+src/utils/logs
+src/checkpoints

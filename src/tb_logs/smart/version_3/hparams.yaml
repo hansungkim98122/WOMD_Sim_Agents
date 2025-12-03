@@ -1,0 +1,67 @@
+model_config: !!python/object/new:easydict.EasyDict
+  dictitems:
+    dataset: waymo
+    decoder: &id001 !!python/object/new:easydict.EasyDict
+      dictitems:
+        a2a_radius: 60
+        num_agent_layers: 6
+        num_future_steps: 80
+        num_historical_steps: 11
+        num_map_layers: 3
+        pl2a_radius: 30
+        pl2pl_radius: 10
+        time_span: 30
+        token_size: 2048
+        use_intention: true
+      state:
+        a2a_radius: 60
+        num_agent_layers: 6
+        num_future_steps: 80
+        num_historical_steps: 11
+        num_map_layers: 3
+        pl2a_radius: 30
+        pl2pl_radius: 10
+        time_span: 30
+        token_size: 2048
+        use_intention: true
+    dropout: 0.1
+    head_dim: 16
+    hidden_dim: 128
+    inference: false
+    input_dim: 2
+    lr: 0.0005
+    mode: train
+    num_freq_bands: 64
+    num_future_steps: 80
+    num_heads: 8
+    num_historical_steps: 11
+    output_dim: 2
+    output_head: false
+    predictor: smart
+    token_size: 2048
+    total_steps: 32
+    use_intention: true
+    use_smart_tokens: true
+    warmup_steps: 0
+  state:
+    dataset: waymo
+    decoder: *id001
+    dropout: 0.1
+    head_dim: 16
+    hidden_dim: 128
+    inference: false
+    input_dim: 2
+    lr: 0.0005
+    mode: train
+    num_freq_bands: 64
+    num_future_steps: 80
+    num_heads: 8
+    num_historical_steps: 11
+    output_dim: 2
+    output_head: false
+    predictor: smart
+    token_size: 2048
+    total_steps: 32
+    use_intention: true
+    use_smart_tokens: true
+    warmup_steps: 0

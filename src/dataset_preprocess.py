@@ -597,11 +597,11 @@ def decode_map_features_from_proto(map_features):
         cur_info['polyline_index'] = (point_cnt, point_cnt + len(cur_polyline))
         point_cnt += len(cur_polyline)
 
-    # try:
-    polylines = np.concatenate(polylines, axis=0).astype(np.float32)
-    # except:
-    #     polylines = np.zeros((0, 8), dtype=np.float32)
-    #     print('Empty polylines: ')
+    try:
+        polylines = np.concatenate(polylines, axis=0).astype(np.float32)
+    except:
+        polylines = np.zeros((0, 8), dtype=np.float32)
+        print('Empty polylines: ')
     map_infos['all_polylines'] = polylines
     map_infos['lane2other_dict'] = lane2other_dict
     return map_infos

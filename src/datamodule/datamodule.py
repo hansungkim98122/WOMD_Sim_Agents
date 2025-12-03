@@ -37,6 +37,7 @@ class MultiDataModule(pl.LightningDataModule):
                  processor='ntp',
                  use_intention=False,
                  token_size=512,
+                 smart_token: bool = True,
                  **kwargs) -> None:
         super(MultiDataModule, self).__init__()
         self.root = root
@@ -57,6 +58,7 @@ class MultiDataModule(pl.LightningDataModule):
         self.processor = processor
         self.use_intention = use_intention
         self.token_size = token_size
+        self.smart_token =smart_token
 
         train_transform = MultiDataModule.transforms[transform](num_historical_steps, num_future_steps, "train")
         val_transform = MultiDataModule.transforms[transform](num_historical_steps, num_future_steps, "val")
@@ -68,11 +70,11 @@ class MultiDataModule(pl.LightningDataModule):
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = MultiDataModule.dataset[self.dataset_class](self.root, 'train', processed_dir=self.train_processed_dir,
-                                                                         raw_dir=self.train_raw_dir, processor=self.processor, transform=self.train_transform, token_size=self.token_size)
+                                                                         raw_dir=self.train_raw_dir, processor=self.processor, transform=self.train_transform, token_size=self.token_size,smart_token=self.smart_token)
         self.val_dataset = MultiDataModule.dataset[self.dataset_class](None, 'val', processed_dir=self.val_processed_dir,
-                                                                       raw_dir=self.val_raw_dir, processor=self.processor, transform=self.val_transform, token_size=self.token_size)
+                                                                       raw_dir=self.val_raw_dir, processor=self.processor, transform=self.val_transform, token_size=self.token_size,smart_token=self.smart_token)
         self.test_dataset = MultiDataModule.dataset[self.dataset_class](None, 'test', processed_dir=self.test_processed_dir,
-                                                                        raw_dir=self.test_raw_dir, processor=self.processor, transform=self.test_transform, token_size=self.token_size)
+                                                                        raw_dir=self.test_raw_dir, processor=self.processor, transform=self.test_transform, token_size=self.token_size,smart_token=self.smart_token)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=self.shuffle,

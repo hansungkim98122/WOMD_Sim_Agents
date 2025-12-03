@@ -161,10 +161,16 @@ def assign_clusters(sub_X, centroids):
 
 class TokenProcessor:
 
-    def __init__(self, token_size):
+    def __init__(self, token_size, use_smart_tokens):
         module_dir = os.path.dirname(os.path.dirname(__file__))
-        self.agent_token_path = os.path.join(module_dir, f'tokens/smart_cluster_frame_5_{token_size}.pkl')
-        self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
+        if use_smart_tokens:
+            self.agent_token_path = os.path.join(module_dir, f'tokens/smart_cluster_frame_5_{token_size}.pkl')
+            self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
+            print(f'Initialized TokenProcessor with Token Size {token_size}, use_smart_token: {use_smart_tokens}')
+        else:
+            self.agent_token_path = os.path.join(module_dir, f'tokens/custom_cluster_frame_5.pkl')
+            self.map_token_traj_path = os.path.join(module_dir, 'tokens/custom_map_traj_token5.pkl')          
+            print(f'Initialized TokenProcessor with custom tokens')  
         self.noise = False
         self.disturb = False
         self.shift = 5
