@@ -16,7 +16,34 @@ from collections import defaultdict
 import os
 from waymo_open_dataset.protos import sim_agents_submission_pb2
 
-
+class LambdaScheduler:
+    def __init__(self, start_val=1.0, end_val=0.1, decay_steps=10000, decay_type='linear'):
+        self.start_val = start_val
+        self.end_val = end_val
+        self.decay_steps = decay_steps
+        self.decay_type = decay_type
+        
+    def get_lambda(self, current_step):
+        if current_step >= self.decay_steps:
+            return self.end_val
+        
+        if self.decay_type == 'linear':
+            # Linear decay: y = mx + c
+            curr_val = self.start_val - (self.start_val - self.end_val) * (current_step / self.decay_steps)
+            return curr_val
+            
+        elif self.decay_type == 'cosine':
+            # Cosine decay (smoother)
+            progress = current_step / self.decay_steps
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+            curr_val = self.end_val + (self.start_val - self.end_val) * cosine_decay
+            return curr_val
+            
+        elif self.decay_type == 'exponential':
+             # Exponential decay
+             gamma = (self.end_val / self.start_val) ** (1 / self.decay_steps)
+             return self.start_val * (gamma ** current_step)
+        
 def cal_polygon_contour(x, y, theta, width, length):
     left_front_x = x + 0.5 * length * math.cos(theta) - 0.5 * width * math.sin(theta)
     left_front_y = y + 0.5 * length * math.sin(theta) + 0.5 * width * math.cos(theta)
@@ -97,7 +124,8 @@ class SMART(pl.LightningModule):
             map_token={'traj_src': self.map_token['traj_src']},
             token_data=token_data,
             token_size=model_config.decoder.token_size,
-            smart_token=model_config.use_smart_tokens
+            smart_token=model_config.use_smart_tokens,
+            use_mala=model_config.use_mala
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
@@ -162,11 +190,13 @@ class SMART(pl.LightningModule):
         map_next_token_eval_mask = pred['map_next_token_eval_mask']
         map_next_token_prob = pred['map_next_token_prob']
         map_cls_loss = self.map_cls_loss(map_next_token_prob[map_next_token_eval_mask], map_next_token_idx_gt[map_next_token_eval_mask])
-
+        # lamb = self.loss_weight_scheduler.get_lambda(self.step)
         loss = cls_loss + map_cls_loss
         self.log('train_loss', loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
         self.log('cls_loss', cls_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
         self.log('map_cls_loss', map_cls_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=1)
+        # self.step += 
+        
         return loss
 
     def validation_step(self,
@@ -243,6 +273,7 @@ class SMART(pl.LightningModule):
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,self.model_config.total_steps*10000, self.lr/100)
         else: 
             NotImplementedError
+            self.loss_weight_scheduler = LambdaScheduler(start_val=1.0, end_val=0.0, decay_steps=5000)
         return [optimizer], [lr_scheduler]
 
     def load_params_from_file(self, filename, logger, to_cpu=False):

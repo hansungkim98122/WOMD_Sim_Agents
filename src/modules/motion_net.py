@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from model.mlp_layer import MLPLayer
 from model.attention_layer import AttentionLayer
+from model.mala import MotionMALA
 from model.fourier_embedding import FourierEmbedding, MLPEmbedding
 from torch_cluster import radius, radius_graph
 from torch_geometric.data import Batch, HeteroData
@@ -52,7 +53,8 @@ class MotionNet(nn.Module):
                  dropout: float,
                  token_data: Dict,
                  token_size=512,
-                 smart_token: bool = True) -> None:
+                 smart_token: bool = True,
+                 use_mala: bool = False) -> None:
         super(MotionNet, self).__init__()
         self.dataset = dataset
         self.input_dim = input_dim
@@ -66,6 +68,7 @@ class MotionNet(nn.Module):
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.dropout = dropout
+        self.use_mala = use_mala
 
         input_dim_x_a = 2
         input_dim_r_t = 4
@@ -88,20 +91,32 @@ class MotionNet(nn.Module):
         self.fusion_emb = MLPEmbedding(input_dim=self.hidden_dim * 2, hidden_dim=self.hidden_dim)
 
         # Temporal self attention (agent to itself)
-        self.t_attn_layers = nn.ModuleList(
-            [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
-                            bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
-        )
+       
+        if self.use_mala:
+            self.t_attn_layers = nn.ModuleList(
+                [MotionMALA(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout) for _ in range(num_layers)]
+            )
+        else:
+            self.t_attn_layers = nn.ModuleList(
+                [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
+                                bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
+            )
         # map -> agent cross attention 
         self.pt2a_attn_layers = nn.ModuleList(
             [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
                             bipartite=True, has_pos_emb=True) for _ in range(num_layers)]
         )
         # agent -> agent interaction cross attention (no cross temporal)
-        self.a2a_attn_layers = nn.ModuleList(
-            [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
-                            bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
-        )
+        if self.use_mala:
+            self.a2a_attn_layers = nn.ModuleList(
+                [MotionMALA(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout) for _ in range(num_layers)]
+            )
+            pass
+        else:
+            self.a2a_attn_layers = nn.ModuleList(
+                [AttentionLayer(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout,
+                                bipartite=False, has_pos_emb=True) for _ in range(num_layers)]
+            )
         self.use_smart_tokens = smart_token
         if self.use_smart_tokens:
             self.token_size = token_size

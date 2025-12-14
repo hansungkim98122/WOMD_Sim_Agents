@@ -1,0 +1,75 @@
+save_ckpt_path: /home/hansung/end2end_ad/models/smart_mala
+time_info:
+  num_historical_steps: 11
+  num_future_steps: 80
+  use_intention: true
+  token_size: 2048
+Dataset:
+  num_historical_steps: 11
+  num_future_steps: 80
+  use_intention: true
+  token_size: 2048
+  root: null
+  train_batch_size: 16
+  val_batch_size: 16
+  test_batch_size: 1
+  shuffle: true
+  num_workers: 16
+  pin_memory: true
+  persistent_workers: true
+  train_raw_dir:
+  - ../tmp/scenario/training
+  val_raw_dir:
+  - ../tmp/scenario/validation
+  test_raw_dir:
+  - ../tmp/scenario/testing
+  transform: WaymoTargetBuilder
+  train_processed_dir: null
+  val_processed_dir: null
+  test_processed_dir: null
+  dataset: scalable
+Trainer:
+  strategy: ddp_find_unused_parameters_false
+  accelerator: gpu
+  devices: 1
+  max_epochs: 32
+  save_ckpt_path: null
+  num_nodes: 1
+  mode: null
+  ckpt_path: null
+  precision: 32
+  accumulate_grad_batches: 3
+Model:
+  num_historical_steps: 11
+  num_future_steps: 80
+  use_intention: true
+  token_size: 2048
+  mode: train
+  predictor: smart
+  dataset: waymo
+  input_dim: 2
+  hidden_dim: 128
+  output_dim: 2
+  output_head: false
+  num_heads: 8
+  head_dim: 16
+  dropout: 0.1
+  num_freq_bands: 64
+  lr: 0.0005
+  warmup_steps: 0
+  total_steps: 32
+  use_smart_tokens: true
+  use_mala: true
+  inference: true
+  lr_scheduler: cosine
+  decoder:
+    num_historical_steps: 11
+    num_future_steps: 80
+    use_intention: true
+    token_size: 2048
+    num_map_layers: 3
+    num_agent_layers: 6
+    a2a_radius: 60
+    pl2pl_radius: 10
+    pl2a_radius: 30
+    time_span: 30

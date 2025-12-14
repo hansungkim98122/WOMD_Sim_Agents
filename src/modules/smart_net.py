@@ -27,7 +27,8 @@ class SMARTDecoder(nn.Module):
                  token_data: Dict,
                  use_intention=False,
                  token_size=512,
-                 smart_token: bool = True) -> None:
+                 smart_token: bool = True,
+                 use_mala: bool = False) -> None:
         super(SMARTDecoder, self).__init__()
         self.map_encoder = RoadNet(
             dataset=dataset,
@@ -57,7 +58,8 @@ class SMARTDecoder(nn.Module):
             dropout=dropout,
             token_size=token_size,
             token_data=token_data,
-            smart_token=smart_token
+            smart_token=smart_token,
+            use_mala=use_mala
         )
         self.map_enc = None
 

@@ -1,4 +1,9 @@
 # Config format schema number, the yaml support to valid case source from different dataset
+# Training 
+save_ckpt_path: /home/hansung/end2end_ad/models/smart_mala
+pretrain_ckpt: ""
+log_dir: tb_logs
+
 time_info: &time_info
   num_historical_steps: 11
   num_future_steps: 80
@@ -16,7 +21,7 @@ Dataset:
   persistent_workers: True
   train_raw_dir: ["../tmp/scenario/training"]
   val_raw_dir: ["../tmp/scenario/validation"]
-  test_raw_dir:
+  test_raw_dir: ["../tmp/scenario/testing"]
   transform: WaymoTargetBuilder
   train_processed_dir:
   val_processed_dir:
@@ -53,6 +58,7 @@ Model:
   warmup_steps: 0
   total_steps: 32
   use_smart_tokens: True
+  use_mala: True
   inference: True
   lr_scheduler: cosine
   decoder:
