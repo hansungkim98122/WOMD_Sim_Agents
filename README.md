@@ -25,6 +25,11 @@ See [SMART](https://github.com/rainmaker22/SMART ) for detailed environment setu
 
 For your reference, training on NVIDIA RTX PRO 6000 Blackwell with 98GB VRAM took ~6 hours per epoch on the WOMD training dataset.
 Fine-tuning took ~40 hours.
+## Data Downloading:
+You can download data from Google Cloud Buckets from [Waymo] (https://waymo.com/open/download) website. Easiest way to download the data is to install gsutil and use the command
+```
+gsutil cp -r <bucket address. starts with gs:// > <destination folder directory>
+```
 
 ## Data preprocessing:
 After downloading the Waymo Open Motion Dataset (Scenario: training, validation, and testing). You can start preprocessing data, which generates pickle files for each scenario in the raw data proto.
