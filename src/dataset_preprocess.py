@@ -667,9 +667,6 @@ def wm2argo(file, dir_name, output_dir,codebook_dir):
     dataset_iterator = dataset.as_numpy_iterator()
     my_list = list(dataset_iterator)
     print(len(my_list))
-    # scenarios that are missing map features: https://github.com/waymo-research/waymo-open-dataset/issues/772
-    avoid_set = ['e1f412d402676e57','9e0ed12773f813eb','ff6686b0e98d66ae','981f5c4f61505759','664537fc3819c08a','b6f042d4029a0297','1ebe3d70cb05a381','ab7571715a1d5193','5a99e6200deb4792']
-
     for cnt, data in enumerate(dataset):
         scenario = scenario_pb2.Scenario()
         # if isinstance(data, (bytes, bytearray)):
@@ -689,8 +686,6 @@ def wm2argo(file, dir_name, output_dir,codebook_dir):
         # womd_camera_scenario = scenario_pb2.Scenario.FromString(camera_data.numpy())
         # scenario = womd_camera_utils.add_camera_tokens_to_scenario(
         #     scenario, womd_camera_scenario)
-        if scenario.scenario_id in avoid_set:
-            continue
         save_infos = process_single_data(scenario) # pkl2mtr
         map_info = save_infos["map_infos"]
         track_info = save_infos['track_infos']

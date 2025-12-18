@@ -95,6 +95,8 @@ class RoadNet(nn.Module):
 
         token2pl = data[('pt_token', 'to', 'map_polygon')]['edge_index']
         token_light_type = data['map_polygon']['light_type'][token2pl[1]]
+
+        #Injecting the map token light type (stop, go, caution, unknown). Adding categorical embedding
         x_pt_categorical_embs = [self.type_pt_emb(data['pt_token']['type'].long()),
                                  self.polygon_type_emb(data['pt_token']['pl_type'].long()),
                                  self.light_pl_emb(token_light_type.long()),]

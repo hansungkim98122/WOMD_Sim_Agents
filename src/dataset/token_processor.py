@@ -65,7 +65,7 @@ def cal_polygon_contour(x, y, theta, width, length):
     return polygon_contour
 
 
-def interplating_polyline(polylines, heading, distance=0.5, split_distace=5):
+def interpolating_polyline(polylines, heading, distance=0.5, split_distace=5):
     # Calculate the cumulative distance along the path, up-sample the polyline to 0.5 meter
     dist_along_path_list = [[0]]
     polylines_list = [[polylines[0]]]
@@ -473,7 +473,7 @@ class TokenProcessor:
                     indices = np.where((cur_side == side_val) & (cur_type == type_val))[0]
                     if len(indices) <= 2:
                         continue
-                    split_polyline = interplating_polyline(cur_pos[indices].numpy(), cur_heading[indices].numpy())
+                    split_polyline = interpolating_polyline(cur_pos[indices].numpy(), cur_heading[indices].numpy())
                     if split_polyline is None:
                         continue
                     new_cur_type = cur_type[indices][0]
