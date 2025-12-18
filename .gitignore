@@ -11,4 +11,4 @@ src/checkpoints
 src/outputs
 src/tb_logs
 submission
-models
+models/
