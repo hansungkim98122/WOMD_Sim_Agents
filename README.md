@@ -1,7 +1,11 @@
 # Waymo Open Dataset 2025 Sim Agents Challenge
 This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my own modification for implementation of the SMART backbone training, post-training, and evaluation. It includes the full pipeline from data preprocessing to WOD Sim Agent challenge submission.
 
-[Watch the demo (MP4)](demo/75ae707721eb23b4/validation_75ae707721eb23b4_0.mp4)
+<video src="https://github.com/hansungkim98122/WOMD_Autonomous_Driving/75ae707721eb23b4/validation_75ae707721eb23b4_0.mp4"
+       controls
+       muted
+       playsinline
+       width="600"></video>
 
 ## Environment Setup
 The environment.yaml file that I used on my workstation is also included. Try creating a conda environment
