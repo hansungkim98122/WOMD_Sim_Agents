@@ -1,6 +1,9 @@
 # Waymo Open Dataset 2025 Sim Agents Challenge
 This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my own modification for implementation of the SMART backbone training, post-training, and evaluation. It includes the full pipeline from data preprocessing to WOD Sim Agent challenge submission.
 
+[![Demo]](demo/75ae707721eb23b4/validation_75ae707721eb23b4_0.mp4)
+
+## Environment Setup
 The environment.yaml file that I used on my workstation is also included. Try creating a conda environment
 ```
 conda create -f environment.yaml
@@ -17,6 +20,7 @@ For your reference, training on NVIDIA RTX PRO 6000 Blackwell with 98GB VRAM too
 Fine-tuning took ~40 hours.
 
 ## Data preprocessing
+After downloading the Waymo Open Motion Dataset (Scenario: training, validation, and testing). You can start preprocessing data
 ```
 cd src
 ```
