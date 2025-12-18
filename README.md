@@ -59,3 +59,9 @@ See
 ```
 src/submission_generation.ipynb
 ```
+
+# Acknowledgement
+The majority of the code is from [SMART](https://github.com/rainmaker22/SMART)
+
+# License
+All code in this repository is licensed under the Apache License 2.0.
