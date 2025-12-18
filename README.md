@@ -1,5 +1,5 @@
 # Waymo Open Dataset 2025 Sim Agents Challenge
-This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my own modification for implementation of the SMART backbone training, post-training, and evaluation. It includes the full pipeline from data preprocessing to WOD Sim Agent challenge submission. 
+This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my modifications to support training, post-training, and evaluation of the SMART backbone. It provides the full pipeline from data preprocessing to WOD Sim Agent challenge submission. 
 
 ## Simulation Rollout Examples:
 https://github.com/user-attachments/assets/4f08af72-8b16-481d-a2c7-e192ceb821b6
