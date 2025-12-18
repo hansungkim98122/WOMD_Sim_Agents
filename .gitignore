@@ -4,7 +4,11 @@ tmp/
 src/dataset/__pycache__/
 src/model/__pycache__/
 src/utils/__pycache__/
-src/lightning_logs/
+src/lightning_logs
 src/tokens/*.pkl
 src/utils/logs
 src/checkpoints
+src/outputs
+src/tb_logs
+submission
+models

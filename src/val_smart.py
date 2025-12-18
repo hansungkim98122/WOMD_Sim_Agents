@@ -3,10 +3,10 @@ from argparse import ArgumentParser
 import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 from dataset.dataset import MultiDataset
-from model import SMART
+from model.smart import SMART
 from transforms.target_builder import WaymoTargetBuilder
 from utils.config import load_config_act
-from utils.log import Logging
+from utils.logging import Logging
 
 if __name__ == '__main__':
     pl.seed_everything(2, workers=True)
@@ -19,22 +19,23 @@ if __name__ == '__main__':
     config = load_config_act(args.config)
 
     data_config = config.Dataset
+    data_config['smart_token'] = config.Model.use_smart_tokens
     val_dataset = {
         "scalable": MultiDataset,
     }[data_config.dataset](root=data_config.root, split='val',
                            raw_dir=data_config.val_raw_dir,
                            processed_dir=data_config.val_processed_dir,
-                           transform=WaymoTargetBuilder(config.Model.num_historical_steps, config.Model.decoder.num_future_steps))
+                           transform=WaymoTargetBuilder(config.Model.num_historical_steps, config.Model.decoder.num_future_steps),token_size=config.time_info.token_size)
     dataloader = DataLoader(val_dataset, batch_size=data_config.batch_size, shuffle=False, num_workers=data_config.num_workers,
                             pin_memory=data_config.pin_memory, persistent_workers=True if data_config.num_workers > 0 else False)
     Predictor = SMART
     if args.pretrain_ckpt == "":
-        model = Predictor(config.Model)
+        ValueError('Ckpt not defined')
     else:
         logger = Logging().log(level='DEBUG')
         model = Predictor(config.Model)
-        model.load_params_from_file(filename=args.pretrain_ckpt,
-                                    logger=logger)
+        print(f"Loading pretrained model from: {args.pretrain_ckpt}")
+        model = Predictor.load_from_checkpoint(args.pretrain_ckpt, config=config.Model) 
 
     trainer_config = config.Trainer
     trainer = pl.Trainer(accelerator=trainer_config.accelerator,

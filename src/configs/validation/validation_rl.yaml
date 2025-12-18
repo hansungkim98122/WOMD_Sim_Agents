@@ -1,0 +1,83 @@
+# Config format schema number, the yaml support to valid case source from different dataset
+# Training 
+save_ckpt_path: /home/hansung/end2end_ad/models/smart_rl
+
+log_dir: tb_logs
+
+finetuning:
+  amax: 6
+  collision: 1
+  gamma: 0.95
+  lr: 5e-4
+  logging_period: 10
+  saving_period: 100
+  save_ckpt_path: checkpoints/finetuning
+  pretrain_ckpt: checkpoints/finetuning/last_mapkeys_fixed.ckpt
+  # pretrain_ckpt: checkpoints/last-v2.ckpt
+  max_epochs: 1
+
+time_info: &time_info
+  num_historical_steps: 11
+  num_future_steps: 80
+  use_intention: True
+  token_size: 2048
+
+Dataset:
+  root:
+  train_batch_size: 4
+  val_batch_size: 1
+  test_batch_size: 1
+  shuffle: True
+  num_workers: 32
+  pin_memory: True
+  persistent_workers: True
+  train_raw_dir: 
+  val_raw_dir: ["../tmp/scenario/validation"]
+  test_raw_dir: ["../tmp/scenario/testing"]
+  transform: WaymoTargetBuilder
+  train_processed_dir:
+  val_processed_dir:
+  test_processed_dir:
+  dataset: "scalable"
+  <<: *time_info
+
+Trainer:
+  strategy: ddp_find_unused_parameters_false
+  accelerator: "gpu"
+  devices: 1
+  max_epochs: 1
+  save_ckpt_path: /home/hansung/end2end_ad/models/smart_rl
+  num_nodes: 1
+  mode:
+  ckpt_path:
+  precision: 32
+  accumulate_grad_batches: 32
+
+Model:
+  mode: "train"
+  predictor: "smart"
+  dataset: "waymo"
+  input_dim: 2
+  hidden_dim: 128
+  output_dim: 2
+  output_head: False
+  num_heads: 8
+  <<: *time_info
+  head_dim: 16
+  dropout: 0.1
+  num_freq_bands: 64
+  lr: 0.0005
+  warmup_steps: 0
+  total_steps: 32
+  use_smart_tokens: True
+  use_mala: False
+  inference: True
+  lr_scheduler: cosine
+  decoder:
+    <<: *time_info
+    num_map_layers: 3
+    num_agent_layers: 6
+    a2a_radius: 60
+    pl2pl_radius: 10
+    pl2a_radius: 30
+    time_span: 30

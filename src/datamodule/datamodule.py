@@ -78,7 +78,7 @@ class MultiDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=self.shuffle,
-                          num_workers=self.num_workers, pin_memory=self.pin_memory,
+                          num_workers=1, pin_memory=self.pin_memory,
                           persistent_workers=self.persistent_workers)
 
     def val_dataloader(self):

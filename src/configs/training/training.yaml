@@ -1,8 +1,21 @@
 # Config format schema number, the yaml support to valid case source from different dataset
 # Training 
-save_ckpt_path: /home/hansung/end2end_ad/models/smart_mala
-pretrain_ckpt: ""
+save_ckpt_path: /home/hansung/end2end_ad/models/smart
+
 log_dir: tb_logs
+
+finetuning:
+  amax: 6
+  collision: 1
+  gamma: 0.95
+  lr: 5e-6
+  logging_period: 10
+  saving_period: 100
+  save_ckpt_path: checkpoints/finetuning
+  pretrain_ckpt: checkpoints/last-v2.ckpt
+  max_epochs: 1000
+
+
 
 time_info: &time_info
   num_historical_steps: 11
@@ -58,7 +71,7 @@ Model:
   warmup_steps: 0
   total_steps: 32
   use_smart_tokens: True
-  use_mala: True
+  use_mala: False
   inference: True
   lr_scheduler: cosine
   decoder:

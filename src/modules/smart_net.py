@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import torch
 import torch.nn as nn
 from torch_geometric.data import HeteroData
@@ -68,11 +68,20 @@ class SMARTDecoder(nn.Module):
         agent_enc = self.agent_encoder(data, map_enc)
         return {**map_enc, **agent_enc}
 
-    def inference(self, data: HeteroData) -> Dict[str, torch.Tensor]:
+    def inference(self, data: HeteroData, generator=None) -> Dict[str, torch.Tensor]:
         map_enc = self.map_encoder(data)
-        agent_enc = self.agent_encoder.inference(data, map_enc)
+        agent_enc = self.agent_encoder.inference(data, map_enc, generator=generator)
         return {**map_enc, **agent_enc}
 
     def inference_no_map(self, data: HeteroData, map_enc) -> Dict[str, torch.Tensor]:
         agent_enc = self.agent_encoder.inference(data, map_enc)
         return {**map_enc, **agent_enc}
+
+    def inference_one_step_init(self, data: HeteroData):
+        map_enc = self.map_encoder(data)
+        return self.agent_encoder.init_rollout_state(data, map_enc)
+    
+    def inference_rollout_step(self,
+                    state: Dict[str, Any],
+                    t: int):
+        return self.agent_encoder.rollout_step(state,t) 

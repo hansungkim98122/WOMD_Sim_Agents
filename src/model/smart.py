@@ -2,6 +2,7 @@ import contextlib
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from typing import Dict, Mapping, Optional,Any
 from torch_geometric.data import Batch
 from torch_geometric.data import HeteroData
 from metrics.min_ade import minADE
@@ -11,10 +12,16 @@ from modules.smart_net import SMARTDecoder
 from torch.optim.lr_scheduler import LambdaLR
 import math
 import numpy as np
+import tensorflow as tf
+# tf.config.set_visible_devices([], "GPU")
+from dataclasses import dataclass
 import pickle
 from collections import defaultdict
 import os
 from waymo_open_dataset.protos import sim_agents_submission_pb2
+from waymo_open_dataset.wdl_limited.sim_agents_metrics.interaction_features import compute_distance_to_nearest_object, compute_time_to_collision_with_object_in_front
+from waymo_open_dataset.wdl_limited.sim_agents_metrics.map_metric_features import compute_distance_to_road_edge
+from waymo_open_dataset.wdl_limited.sim_agents_metrics.trajectory_features import compute_kinematic_features, compute_kinematic_validity, compute_displacement_error
 
 class LambdaScheduler:
     def __init__(self, start_val=1.0, end_val=0.1, decay_steps=10000, decay_type='linear'):
@@ -96,6 +103,7 @@ class SMART(pl.LightningModule):
         self.num_freq_bands = model_config.num_freq_bands
         self.vis_map = False
         self.noise = True
+        
         module_dir = os.path.dirname(os.path.dirname(__file__))
         if model_config.use_smart_tokens:
             self.map_token_traj_path = os.path.join(module_dir, 'tokens/smart_map_traj_token5.pkl')
@@ -106,6 +114,9 @@ class SMART(pl.LightningModule):
         self.init_map_token()
 
         token_data = self.get_trajectory_token()
+        ########################33
+        # model_config.use_mala = False
+        #############################
         self.encoder = SMARTDecoder(
             dataset=model_config.dataset,
             input_dim=model_config.input_dim,
@@ -125,7 +136,8 @@ class SMART(pl.LightningModule):
             token_data=token_data,
             token_size=model_config.decoder.token_size,
             smart_token=model_config.use_smart_tokens,
-            use_mala=model_config.use_mala
+            use_mala=getattr(model_config, "use_mala", False)
+
         )
         self.minADE = minADE(max_guesses=1)
         self.minFDE = minFDE(max_guesses=1)
@@ -160,9 +172,20 @@ class SMART(pl.LightningModule):
         res = self.encoder(data)
         return res
 
-    def inference(self, data: HeteroData):
-        res = self.encoder.inference(data)
-        return res
+    def inference(self, data: HeteroData, generator=None):
+        return self.encoder.inference(data, generator=generator)
+
+    def inference_one_step_init(self, data: HeteroData):
+        data = self.match_token_map(data)
+        data = self.sample_pt_pred(data)
+        if isinstance(data, Batch):
+            data['agent']['av_index'] += data['agent']['ptr'][:-1]
+        return self.encoder.inference_one_step_init(data)
+    
+    def inference_rollout_step(self,
+                    state: Dict[str, Any],
+                    t: int):
+        return self.encoder.inference_rollout_step(state,t) 
 
     def maybe_autocast(self, dtype=torch.float16):
         enable_autocast = self.device != torch.device("cpu")

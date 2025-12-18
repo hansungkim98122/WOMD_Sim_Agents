@@ -1,5 +1,5 @@
 import pickle
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional,Any
 import torch
 import torch.nn as nn
 from model.mlp_layer import MLPLayer
@@ -93,6 +93,7 @@ class MotionNet(nn.Module):
         # Temporal self attention (agent to itself)
        
         if self.use_mala:
+            print('USING MALA'.center(80,))
             self.t_attn_layers = nn.ModuleList(
                 [MotionMALA(hidden_dim=hidden_dim, num_heads=num_heads, head_dim=head_dim, dropout=dropout) for _ in range(num_layers)]
             )
@@ -462,7 +463,9 @@ class MotionNet(nn.Module):
 
     def inference(self,
                   data: HeteroData,
-                  map_enc: Mapping[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+                  map_enc: Mapping[str, torch.Tensor],
+                  generator=None) -> Dict[str, torch.Tensor]:
+
         eval_mask = data['agent']['valid_mask'][:, self.num_historical_steps - 1]
         pos_a = data['agent']['token_pos'].clone()
         head_a = data['agent']['token_heading'].clone()
@@ -494,6 +497,7 @@ class MotionNet(nn.Module):
         pred_traj = torch.zeros(data["agent"].num_nodes, self.num_recurrent_steps_val, 2, device=feat_a.device)
         pred_head = torch.zeros(data["agent"].num_nodes, self.num_recurrent_steps_val, device=feat_a.device)
         pred_prob = torch.zeros(data["agent"].num_nodes, self.num_recurrent_steps_val // self.shift, device=feat_a.device)
+        next_token_logits = torch.zeros(num_agent, self.num_recurrent_steps_val // self.shift, self.token_size, device=feat_a.device)
         next_token_idx_list = []
         mask = agent_valid_mask.clone()
         feat_a_t_dict = {}
@@ -558,10 +562,12 @@ class MotionNet(nn.Module):
 
             next_token_prob = torch.zeros(num_agent, self.token_size,
                                         device=feat_a.device, dtype=feat_a.dtype)
+            
 
             next_token_prob[veh_mask] = self.token_predict_head(feat_t[veh_mask])
             next_token_prob[ped_mask] = self.token_predict_walker_head(feat_t[ped_mask])
             next_token_prob[cyc_mask] = self.token_predict_cyc_head(feat_t[cyc_mask])
+            next_token_logits[:,t,:] = next_token_prob
             ######
 
             next_token_prob_softmax = torch.softmax(next_token_prob, dim=-1)
@@ -583,7 +589,12 @@ class MotionNet(nn.Module):
                                            -1, 2, 2)).view(num_agent, self.beam_size, self.shift + 1, 4, 2)
             agent_pred_rel = agent_diff_rel + pos_a[:, (self.num_historical_steps - 1) // self.shift - 1 + t, :][:, None, None, None, ...]
 
-            sample_index = torch.multinomial(topk_prob, 1).to(agent_pred_rel.device)
+            # sample_index = torch.multinomial(topk_prob, 1).to(agent_pred_rel.device)
+            # add generator param to inference(...) signature
+            if generator is None:
+                generator = torch.Generator(device=feat_a.device)
+            sample_index = torch.multinomial(topk_prob, 1, generator=generator).to(agent_pred_rel.device)
+            ########################33
             agent_pred_rel = agent_pred_rel.gather(dim=1,
                                                    index=sample_index[..., None, None, None].expand(-1, -1, 6, 4,
                                                                                                     2))[:, 0, ...]
@@ -637,5 +648,291 @@ class MotionNet(nn.Module):
             'next_token_idx_gt': agent_token_index.roll(shifts=-1, dims=1),
             'next_token_eval_mask': data['agent']['agent_valid_mask'],
             'pred_prob': pred_prob,
-            'vel': vel
+            'vel': vel,
+            'next_token_logits': next_token_logits
+        }
+
+    # Put this inside motion_net.py (or a helper file imported by rl_finetune.py)
+    @torch.no_grad()
+    def init_rollout_state(self,
+                        data: HeteroData,
+                        map_enc: Mapping[str, torch.Tensor]) -> Dict[str, Any]:
+        """
+        Call once per scenario/episode. Prepares everything needed for fast step() calls.
+        """
+        device = map_enc["x_pt"].device
+
+        eval_mask = data['agent']['valid_mask'][:, self.num_historical_steps - 1]  # (N,)
+        pos_a = data['agent']['token_pos'].clone().to(device)                      # (N, num_step, traj_dim)
+        head_a = data['agent']['token_heading'].clone().to(device)                 # (N, num_step)
+        num_agent, num_step, traj_dim = pos_a.shape
+
+        hist_token_idx = (self.num_historical_steps - 1) // self.shift  # index in token-time
+        # zero out future tokens
+        pos_a[:, hist_token_idx:] = 0
+        head_a[:, hist_token_idx:] = 0
+        head_vector_a = torch.stack([head_a.cos(), head_a.sin()], dim=-1)
+
+        agent_valid_mask = data['agent']['agent_valid_mask'].clone().to(device)
+        agent_valid_mask[:, hist_token_idx:] = True
+        agent_valid_mask[~eval_mask] = False
+
+        agent_token_index = data['agent']['token_idx'].to(device)
+        agent_category = data['agent']['category'].to(device)
+
+        feat_a, agent_token_traj, agent_token_traj_all, agent_token_emb, categorical_embs = self.agent_token_embedding(
+            data,
+            agent_category,
+            agent_token_index,
+            pos_a,
+            head_vector_a,
+            inference=True
+        )
+        # feat_a: (N, num_step, hidden_dim)
+        # agent_token_traj_all: (N, token_size, 6, 4, 2) (based on your gather usage)
+        # agent_token_emb: (N, num_step, hidden_dim)
+        # categorical_embs: used by x_a_emb
+
+        # Precompute batch_s/batch_pl (these do NOT depend on t in your code)
+        if isinstance(data, Batch):
+            # NOTE: your original code mistakenly uses "t" twice; batch_s/batch_pl are constant across rollout steps.
+            batch_s = torch.cat([data['agent']['batch'] + data.num_graphs * tt for tt in range(num_step)], dim=0).to(device)
+            batch_pl = torch.cat([data['pt_token']['batch'] + data.num_graphs * tt for tt in range(num_step)], dim=0).to(device)
+        else:
+            batch_s = torch.arange(num_step, device=device).repeat_interleave(data['agent']['num_nodes'])
+            batch_pl = torch.arange(num_step, device=device).repeat_interleave(data['pt_token']['num_nodes'])
+
+        # rollout horizon in *steps* (not tokens)
+        num_recurrent_steps_val = data["agent"]['position'].shape[1] - self.num_historical_steps
+        num_token_steps = num_recurrent_steps_val // self.shift
+
+        # caches across steps (your inference uses this)
+        feat_a_t_dict: Dict[int, torch.Tensor] = {}
+
+        state = dict(
+            data=data,
+            map_enc=map_enc,
+
+            num_agent=num_agent,
+            num_step=num_step,
+            traj_dim=traj_dim,
+
+            hist_token_idx=hist_token_idx,
+            num_recurrent_steps_val=num_recurrent_steps_val,
+            num_token_steps=num_token_steps,
+
+            eval_mask=eval_mask,
+            pos_a=pos_a,
+            head_a=head_a,
+            head_vector_a=head_vector_a,
+
+            agent_valid_mask=agent_valid_mask,
+            agent_token_index=agent_token_index,
+            agent_category=agent_category,
+
+            feat_a=feat_a,  # (N, num_step, hidden_dim)
+            agent_token_traj_all=agent_token_traj_all,
+            agent_token_emb=agent_token_emb,
+            categorical_embs=categorical_embs,
+
+            batch_s=batch_s,
+            batch_pl=batch_pl,
+
+            feat_a_t_dict=feat_a_t_dict,
+        )
+        return state
+
+
+    def rollout_step(self,
+                    state: Dict[str, Any],
+                    t: int) -> Dict[str, Any]:
+        """
+        One autoregressive token-step.
+        - t: token-step index in [0, num_token_steps)
+        - action_idx: (num_agent,) token ids (RL action). If None, sample like inference().
+        Returns:
+        dict with:
+            - next_token_logits: (num_agent, token_size)
+            - action_idx: (num_agent,)
+            - action_logp: (num_agent,) log prob under current policy (useful for PPO)
+            - action_prob: (num_agent,) prob under softmax (useful for diagnostics)
+            - pos_update: (num_agent, 2) new position token (mean of last corners)
+            - head_update: (num_agent,) new heading
+            - updated state is mutated in-place, and also returned for convenience
+        """
+        data: HeteroData = state["data"]
+        map_enc = state["map_enc"]
+
+        num_agent = state["num_agent"]
+        num_step = state["num_step"]
+        hist_token_idx = state["hist_token_idx"]
+
+        pos_a = state["pos_a"]
+        head_a = state["head_a"]
+        head_vector_a = state["head_vector_a"]
+        agent_valid_mask = state["agent_valid_mask"]
+
+        feat_a = state["feat_a"]
+        feat_a_t_dict = state["feat_a_t_dict"]
+
+        agent_category = state["agent_category"]
+        categorical_embs = state["categorical_embs"]
+
+        agent_token_traj_all = state["agent_token_traj_all"]
+        agent_token_emb = state["agent_token_emb"]
+
+        batch_s = state["batch_s"]
+        batch_pl = state["batch_pl"]
+
+        device = feat_a.device
+
+        # --- build inference_mask (same as your inference()) ---
+        mask = agent_valid_mask
+        if t == 0:
+            inference_mask = mask.clone()
+            inference_mask[:, hist_token_idx + t:] = False
+        else:
+            inference_mask = torch.zeros_like(mask)
+            inference_mask[:, hist_token_idx + t - 1] = True
+
+        # --- edges ---
+        edge_index_t, r_t = self.build_temporal_edge(
+            pos_a, head_a, head_vector_a, num_agent, mask, inference_mask
+        )
+
+        edge_index_pl2a, r_pl2a = self.build_map2agent_edge(
+            data, num_step, agent_category, pos_a, head_a, head_vector_a,
+            inference_mask, batch_s, batch_pl
+        )
+
+        mask_s = inference_mask.transpose(0, 1).reshape(-1)  # (num_step * num_agent,)
+        edge_index_a2a, r_a2a = self.build_interaction_edge(
+            pos_a, head_a, head_vector_a, batch_s, mask_s
+        )
+
+        # --- attention stack with caching (matches your logic) ---
+        for i in range(self.num_layers):
+            if i in feat_a_t_dict:
+                feat_a = feat_a_t_dict[i]
+
+            feat_a = feat_a.reshape(-1, self.hidden_dim)
+            feat_a = self.t_attn_layers[i](feat_a, r_t, edge_index_t)
+
+            feat_a = feat_a.reshape(-1, num_step, self.hidden_dim).transpose(0, 1).reshape(-1, self.hidden_dim)
+
+            feat_a = self.pt2a_attn_layers[i](
+                (
+                    map_enc['x_pt']
+                    .repeat_interleave(repeats=num_step, dim=0)
+                    .reshape(-1, num_step, self.hidden_dim)
+                    .transpose(0, 1)
+                    .reshape(-1, self.hidden_dim),
+                    feat_a
+                ),
+                r_pl2a,
+                edge_index_pl2a
+            )
+
+            feat_a = self.a2a_attn_layers[i](feat_a, r_a2a, edge_index_a2a)
+            feat_a = feat_a.reshape(num_step, -1, self.hidden_dim).transpose(0, 1)  # (N, num_step, hidden_dim)
+
+            # cache update
+            if (i + 1) not in feat_a_t_dict:
+                feat_a_t_dict[i + 1] = feat_a
+            else:
+                # update just the newly-inferred time slice
+                time_slot = hist_token_idx - 1 + t
+                feat_a_t_dict[i + 1][:, time_slot] = feat_a[:, time_slot]
+
+        # --- logits for action distribution ---
+        t_idx = hist_token_idx - 1 + t
+        feat_t = feat_a[:, t_idx]  # (N, hidden_dim)
+
+        agent_type = data['agent']['type'].to(device)
+        veh_mask = (agent_type == 0)
+        ped_mask = (agent_type == 1)
+        cyc_mask = (agent_type == 2)
+
+        next_token_logits = torch.zeros(num_agent, self.token_size, device=device, dtype=feat_a.dtype)
+        next_token_logits[veh_mask] = self.token_predict_head(feat_t[veh_mask])
+        next_token_logits[ped_mask] = self.token_predict_walker_head(feat_t[ped_mask])
+        next_token_logits[cyc_mask] = self.token_predict_cyc_head(feat_t[cyc_mask])
+
+        dist = torch.distributions.Categorical(logits=next_token_logits)
+
+        action_idx = dist.sample()                 # nondiff is fine
+        action_logp = dist.log_prob(action_idx)   
+        action_prob = torch.softmax(next_token_logits, dim=-1).gather(1, action_idx[:, None])[:, 0]
+
+        # >>> everything below is "environment transition": DO NOT build graph <<<
+        with torch.no_grad():
+            expanded_index = action_idx[:, None, None, None, None].expand(-1, 1, 6, 4, 2)
+            next_token_traj = torch.gather(agent_token_traj_all, 1, expanded_index)[:, 0]  # (N,6,4,2)
+
+            theta = head_a[:, t_idx]
+            cos, sin = theta.cos(), theta.sin()
+            rot_mat = torch.zeros((num_agent, 2, 2), device=device, dtype=feat_a.dtype)
+            rot_mat[:, 0, 0] = cos
+            rot_mat[:, 0, 1] = sin
+            rot_mat[:, 1, 0] = -sin
+            rot_mat[:, 1, 1] = cos
+
+            agent_diff_rel = torch.bmm(
+                next_token_traj.reshape(-1, 4, 2),
+                rot_mat[:, None].expand(-1, 6, -1, -1).reshape(-1, 2, 2)
+            ).reshape(num_agent, 6, 4, 2)
+
+            agent_pred_rel = agent_diff_rel + pos_a[:, t_idx, :][:, None, None, :]
+
+            pos_update = agent_pred_rel[:, -1].mean(dim=1)
+            diff_xy_last = agent_pred_rel[:, -1, 0, :] - agent_pred_rel[:, -1, 3, :]
+            head_update = torch.atan2(diff_xy_last[:, 1], diff_xy_last[:, 0])
+
+            pos_a[:, hist_token_idx + t] = pos_update
+            head_a[:, hist_token_idx + t] = head_update
+            head_vector_a = torch.stack([head_a.cos(), head_a.sin()], dim=-1)
+
+            # token emb update
+            agent_token_emb[veh_mask, hist_token_idx + t] = self.agent_token_emb_veh[action_idx[veh_mask]]
+            agent_token_emb[ped_mask, hist_token_idx + t] = self.agent_token_emb_ped[action_idx[ped_mask]]
+            agent_token_emb[cyc_mask, hist_token_idx + t] = self.agent_token_emb_cyc[action_idx[cyc_mask]]
+
+            # rebuild motion features (still no_grad)
+            motion_vector_a = torch.cat([pos_a.new_zeros(data['agent']['num_nodes'], 1, self.input_dim),
+                                        pos_a[:, 1:] - pos_a[:, :-1]], dim=1)
+
+            vel = motion_vector_a / (0.1 * self.shift)
+            vel[:, hist_token_idx + 1 + t:] = 0
+            motion_vector_a[:, hist_token_idx + 1 + t:] = 0
+
+            x_a = torch.stack([
+                torch.norm(motion_vector_a[:, :, :2], p=2, dim=-1),
+                angle_between_2d_vectors(ctr_vector=head_vector_a, nbr_vector=motion_vector_a[:, :, :2]),
+            ], dim=-1)
+
+            x_a = self.x_a_emb(
+                continuous_inputs=x_a.view(-1, x_a.size(-1)),
+                categorical_embs=categorical_embs
+            ).view(-1, num_step, self.hidden_dim)
+
+            feat_a = self.fusion_emb(torch.cat((agent_token_emb, x_a), dim=-1))
+
+            # IMPORTANT: store detached tensors so cache doesn't keep old graphs
+            state["pos_a"] = pos_a.detach()
+            state["head_a"] = head_a.detach()
+            state["head_vector_a"] = head_vector_a.detach()
+            state["feat_a"] = feat_a.detach()
+            # cache should store detached too
+            for k in list(feat_a_t_dict.keys()):
+                feat_a_t_dict[k] = feat_a_t_dict[k].detach()
+            state["feat_a_t_dict"] = feat_a_t_dict
+
+        return {
+            "next_token_logits": next_token_logits,
+            "action_idx": action_idx,
+            "action_logp": action_logp,
+            "action_prob": action_prob,
+            "pos_update": pos_update,
+            "head_update": head_update,
+            "state": state,
         }

@@ -78,6 +78,13 @@ class MultiDataset(Dataset):
     def processed_file_names(self) -> Union[str, List[str], Tuple]:
         return self._processed_file_names
 
+    def query_index(self, scenario_id: str):
+        idx_arr = []
+        for i, s in enumerate(self.raw_paths):
+            if scenario_id in s:
+                idx_arr.append(i)
+        return idx_arr
+    
     def len(self) -> int:
         return self._num_samples
 

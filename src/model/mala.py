@@ -112,87 +112,136 @@ class MALA_Block(nn.Module):
         x = x + self.drop_path(self.ffn(self.norm2(x)))
         return x
 
-# --- MotionMALA behaving as AttentionLayer ---
-class MotionMALA(MessagePassing):
+# src/model/mala.py
+import torch
+import torch.nn as nn
+
+try:
+    from torch_scatter import scatter_add
+except ImportError:
+    scatter_add = None
+
+def _phi(x: torch.Tensor) -> torch.Tensor:
+    # Positive feature map for linear attention
+    return torch.nn.functional.elu(x) + 1.0
+
+class MotionMALA(nn.Module):
     """
-    Wrapper for MALA that matches the AttentionLayer (GNN) signature.
-    Ignores 'edge_index' and 'r' (pos emb), instead using MALA's RoPE and sequence processing.
-    Assumes 'x' can be reshaped into [Batch, SeqLen, Dim].
+    Graph-aware linear attention drop-in replacement for AttentionLayer.
+
+    Signature matches:
+      forward(x, r, edge_index) where
+        x: Tensor [N, D] or tuple (x_src [Ns,D], x_dst [Nd,D]) if bipartite
+        r: Tensor [E, D] (already embedded to hidden_dim in your code)
+        edge_index: LongTensor [2, E] with (src, dst)
+
+    Respects edge_index (so temporal causality from edge filtering is preserved).
+    Uses r by adding projections into K/V per edge (like SMART's AttentionLayer).
     """
-    def __init__(self, 
-                 hidden_dim: int, 
-                 num_heads: int, 
-                 head_dim: int, 
-                 dropout: float, 
-                 bipartite: bool = False, 
-                 has_pos_emb: bool = False, 
+    def __init__(self,
+                 hidden_dim: int,
+                 num_heads: int,
+                 head_dim: int,
+                 dropout: float,
+                 bipartite: bool = False,
+                 has_pos_emb: bool = True,
+                 eps: float = 1e-6,
                  **kwargs):
-        # Inherit from MessagePassing to satisfy type checks if needed
-        super().__init__(aggr='add', node_dim=0, **kwargs)
-        
-        self.embed_dim = hidden_dim
-        self.rope = RoPE1D(head_dim)
-        
-        # We use a single MALA block here to act as one "Layer"
-        self.mala_block = MALA_Block(
-            dim=hidden_dim, 
-            num_heads=num_heads, 
-            head_dim=head_dim, 
-            mlp_ratio=4.0, 
-            dropout=dropout
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.dropout = nn.Dropout(dropout)
+        self.bipartite = bipartite
+        self.has_pos_emb = has_pos_emb
+        self.eps = eps
+
+        self.attn_prenorm_x_src = nn.LayerNorm(hidden_dim)
+        self.attn_prenorm_x_dst = nn.LayerNorm(hidden_dim) if bipartite else self.attn_prenorm_x_src
+        self.attn_prenorm_r = nn.LayerNorm(hidden_dim) if has_pos_emb else None
+
+        self.to_q = nn.Linear(hidden_dim, num_heads * head_dim, bias=False)
+        self.to_k = nn.Linear(hidden_dim, num_heads * head_dim, bias=False)
+        self.to_v = nn.Linear(hidden_dim, num_heads * head_dim, bias=False)
+
+        if has_pos_emb:
+            self.to_k_r = nn.Linear(hidden_dim, num_heads * head_dim, bias=False)
+            self.to_v_r = nn.Linear(hidden_dim, num_heads * head_dim, bias=False)
+
+        self.to_out = nn.Linear(num_heads * head_dim, hidden_dim, bias=False)
+
+        # same gating style as AttentionLayer
+        self.to_g = nn.Linear(2 * hidden_dim, hidden_dim)
+        self.to_s = nn.Linear(hidden_dim, hidden_dim)
+
+        self.attn_postnorm = nn.LayerNorm(hidden_dim)
+        self.ff_prenorm = nn.LayerNorm(hidden_dim)
+        self.ff_postnorm = nn.LayerNorm(hidden_dim)
+
+        self.ff_mlp = nn.Sequential(
+            nn.Linear(hidden_dim, 4 * hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(4 * hidden_dim, hidden_dim),
+            nn.Dropout(dropout),
         )
 
-    def forward(self, x, r=None, edge_index=None):
-        """
-        Matching AttentionLayer signature:
-        x: [Total_Nodes, Dim] or ([Src_Nodes, Dim], [Dst_Nodes, Dim])
-        r: Optional Pos Emb (Ignored)
-        edge_index: Graph Connectivity (Ignored)
-        """
-        # Handle Bipartite case (tuple)
-        if isinstance(x, tuple):
-             # For temporal attention, x is usually just a tensor.
-             # If tuple, we assume we process the target (x[1]) or source (x[0]).
-             # MALA is self-attention, so we likely just want x[0] or x[1].
-             # Assuming standard self-attention usage where x is a Tensor.
-             x_in = x[0] 
+    def forward(self, x, r, edge_index):
+        if isinstance(x, torch.Tensor):
+            x_src = x_dst = self.attn_prenorm_x_src(x)
+            x_res = x
         else:
-             x_in = x
-             
-        # CRITICAL: Reshape for MALA
-        # MALA expects [Batch, SeqLen, Dim].
-        # 'x_in' here is [Total_Nodes, Dim].
-        # We need to know Batch size and SeqLen.
-        # This wrapper assumes the caller (MotionNet) has reshaped x appropriately
-        # OR we treat [Total_Nodes, Dim] as [1, Total_Nodes, Dim] effectively.
-        
-        # In MotionNet, temporal attention is called as:
-        # feat_a = feat_a.reshape(-1, self.hidden_dim) (Flattens [B, N, T] -> [B*N*T])
-        # This destroys sequence info! 
-        # MotionNet expects the GNN layer to handle sparse edges.
-        
-        # MALA needs the structure. 
-        # Ideally, MotionNet should NOT flatten before calling this if using MALA.
-        # But to be drop-in, we assume x comes in as [Batch * N_Agents, Time, Dim] 
-        # or we try to infer.
-        
-        # If input is [Total_Flat, D], we cannot use MALA without knowing Time Steps.
-        # Hack: Assume 1D sequence processing on the flattened input? No.
-        
-        # Let's assume for this specific integration, x is passed as [B, N, T, D] 
-        # or [B*N, T, D].
-        
-        # Fallback: Treat as [1, Total_Nodes, Dim]
-        if x_in.ndim == 2:
-            x_in = x_in.unsqueeze(0) # [1, N, D]
-            
-        B, N, C = x_in.shape
-        sin, cos = self.rope(N, x_in.device)
-        
-        out = self.mala_block(x_in, sin, cos)
-        
-        # Return flattened if input was flattened
-        if x_in.shape[0] == 1 and x_in.ndim == 3 and isinstance(x, torch.Tensor) and x.ndim == 2:
-             return out.squeeze(0)
-             
+            x_src, x_dst = x
+            x_src = self.attn_prenorm_x_src(x_src)
+            x_dst = self.attn_prenorm_x_dst(x_dst)
+            x_res = x[1]  # residual is dst
+
+        if self.has_pos_emb and r is not None:
+            r = self.attn_prenorm_r(r)
+
+        attn_out = self._attn_block(x_src, x_dst, r, edge_index)  # [Nd, D]
+        x_mid = x_res + self.attn_postnorm(attn_out)
+        x_out = x_mid + self.ff_postnorm(self.ff_mlp(self.ff_prenorm(x_mid)))
+        return x_out
+
+    def _attn_block(self, x_src, x_dst, r, edge_index):
+        if scatter_add is None:
+            raise ImportError("torch_scatter is required for MotionMALA graph attention")
+
+        src, dst = edge_index[0], edge_index[1]
+        Nd = x_dst.size(0)
+
+        q = self.to_q(x_dst).view(Nd, self.num_heads, self.head_dim)          # [Nd,H,Dh]
+        k = self.to_k(x_src).view(-1, self.num_heads, self.head_dim)          # [Ns,H,Dh]
+        v = self.to_v(x_src).view(-1, self.num_heads, self.head_dim)          # [Ns,H,Dh]
+
+        k_e = k[src]  # [E,H,Dh]
+        v_e = v[src]  # [E,H,Dh]
+
+        if self.has_pos_emb and r is not None:
+            k_e = k_e + self.to_k_r(r).view(-1, self.num_heads, self.head_dim)
+            v_e = v_e + self.to_v_r(r).view(-1, self.num_heads, self.head_dim)
+
+        # linear attention
+        phi_q = _phi(q)     # [Nd,H,Dh]
+        phi_k = _phi(k_e)   # [E,H,Dh]
+
+        # S_i = sum_j phi(k_j) v_j^T  -> [Nd,H,Dh,Dh]
+        kv = phi_k.unsqueeze(-1) * v_e.unsqueeze(-2)  # [E,H,Dh,Dh]
+        S = scatter_add(kv, dst, dim=0, dim_size=Nd)  # [Nd,H,Dh,Dh]
+
+        # Z_i = sum_j phi(k_j) -> [Nd,H,Dh]
+        Z = scatter_add(phi_k, dst, dim=0, dim_size=Nd)  # [Nd,H,Dh]
+
+        # out_i = (phi(q_i)^T S_i) / (phi(q_i)^T Z_i)
+        num = torch.einsum("nhd,nhdv->nhv", phi_q, S)  # [Nd,H,Dh]
+        den = (phi_q * Z).sum(-1, keepdim=True).clamp_min(self.eps)  # [Nd,H,1]
+        out = num / den  # [Nd,H,Dh]
+
+        out = out.reshape(Nd, self.num_heads * self.head_dim)
+        out = self.to_out(self.dropout(out))  # [Nd,D]
+
+        # gating (same spirit as AttentionLayer.update)
+        g = torch.sigmoid(self.to_g(torch.cat([out, x_dst], dim=-1)))
+        out = out + g * (self.to_s(x_dst) - out)
         return out
