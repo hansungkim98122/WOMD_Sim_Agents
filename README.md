@@ -27,13 +27,16 @@ For your reference, training on NVIDIA RTX PRO 6000 Blackwell with 98GB VRAM too
 Fine-tuning took ~40 hours.
 
 ## Data preprocessing:
-After downloading the Waymo Open Motion Dataset (Scenario: training, validation, and testing). You can start preprocessing data
+After downloading the Waymo Open Motion Dataset (Scenario: training, validation, and testing). You can start preprocessing data, which generates pickle files for each scenario in the raw data proto.
 ```
 cd src
 ```
 ```
 python data_preprocessing.py --input_dir <raw_scenario_data_directory> --output_dir <desired output directory>
 ```
+
+You can store the data in any directory you prefer, but you must explicitly set the paths to the raw (uncompressed) WOMD data and the preprocessed data in the YAML files under src/configs and in the path definitions used in the Jupyter notebooks.
+
 ## Pre-training:
 ```
 python train_smart.py
