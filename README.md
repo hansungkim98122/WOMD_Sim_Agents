@@ -52,6 +52,7 @@ python train_smart.py
 ```
 
 ## Post-training: Fine-tuning using Reinforcement Learning
+On average, post-training improved the meta-realism metric by **3.8%** and minADE by **17.4%.** We deploy a simple policy gradient REINFORCE algorithm with a reward function that penalizes deviation from the ground truth trajectory as well as collision with other agents.
 ```
 python rl_finetune.py
 ```
