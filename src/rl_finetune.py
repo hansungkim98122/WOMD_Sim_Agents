@@ -4,6 +4,10 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import numpy as np
 from argparse import ArgumentParser
 
+import tensorflow as tf
+# Hide GPU from TensorFlow so it doesn't reserve VRAM.
+tf.config.set_visible_devices([], 'GPU')
+
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl

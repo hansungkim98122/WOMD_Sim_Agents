@@ -12,3 +12,4 @@ src/outputs
 src/tb_logs
 submission
 models/
+src/waymo-open-dataset

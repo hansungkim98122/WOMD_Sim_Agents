@@ -8,6 +8,10 @@ from transforms.target_builder import WaymoTargetBuilder
 from utils.config import load_config_act
 from utils.logging import Logging
 
+import tensorflow as tf
+# Hide GPU from TensorFlow so it doesn't reserve VRAM.
+tf.config.set_visible_devices([], 'GPU')
+
 if __name__ == '__main__':
     pl.seed_everything(2, workers=True)
     parser = ArgumentParser()
