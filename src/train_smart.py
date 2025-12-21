@@ -9,6 +9,10 @@ from datamodule.datamodule import MultiDataModule
 from model.smart import SMART
 from utils.logging import Logging
 
+import tensorflow as tf
+# Hide GPU from TensorFlow so it doesn't reserve VRAM.
+tf.config.set_visible_devices([], 'GPU')
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     Predictor_hash = {"smart": SMART, }
