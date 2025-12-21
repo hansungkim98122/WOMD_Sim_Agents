@@ -1,5 +1,5 @@
-# Waymo Open Motion Dataset 2025 Sim Agents Challenge
-This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my modifications to support training, post-training, and evaluation of the SMART backbone. SMART formulates the traffic agent (Vehicle, Pedestrians, Cyclists) motion prediction problem as a next token prediction. With recent advances and great success in text token prediction tasks using LLMs, motion prediction can borrow ideas from LLMs in their architectures and training algorithms. First, motion trajectories can be broken down into smaller units (~0.5 second segments) and discretized into finite motion token vocabularies. Using these discrete motion tokens, we can encode and decode agents' motion in the scene. Similarly, map information (polylines, polygons) can be tokenized. Given the map and trajectory history of the agents in the scene, the attention-based encoder-decoder architecture of SMART autoregressively generates agents' future trajectories by "predicting next tokens".
+# Waymo Open Motion Dataset 2025 Sim Agents Challenge (Full Pipeline: Pre-training to Submission)
+This repository is adopted from [SMART](https://github.com/rainmaker22/SMART ) with my modifications to support training, post-training, and evaluation of the SMART backbone models. SMART formulates the traffic agent (Vehicle, Pedestrians, Cyclists) motion prediction problem as a next token prediction. With recent advances and great success in text token prediction tasks using LLMs, motion prediction can borrow ideas from LLMs in their architectures and training algorithms. First, motion trajectories can be broken down into smaller units (~0.5 second segments) and discretized into finite motion token vocabularies. Using these discrete motion tokens, we can encode and decode agents' motion in the scene. Similarly, map information (polylines, polygons) can be tokenized. Given the map and trajectory history of the agents in the scene, the attention-based encoder-decoder architecture of SMART autoregressively generates agents' future trajectories by "predicting next tokens".
 
 Because our token predictor outputs logits over a discrete token vocabulary, we can sample from the resulting categorical distribution to inject controlled randomness into trajectory generation. This produces diverse joint rollouts of the scene and makes the model well-suited for multi-agent simulation.
 
@@ -52,6 +52,7 @@ python train_smart.py
 ```
 
 ## Post-training: Fine-tuning using Reinforcement Learning
+On average, post-training improved the meta-realism metric by **3.8%** and minADE by **17.4%.** We deploy a simple policy gradient REINFORCE algorithm with a reward function that penalizes deviation from the ground truth trajectory as well as collision with other agents.
 ```
 python rl_finetune.py
 ```
