@@ -25,12 +25,12 @@ conda activate e2e
 pip install -r requirements.txt
 ```
 
-See [SMART](https://github.com/rainmaker22/SMART ) for detailed environment setup and dependencies setup.
+See [SMART](https://github.com/rainmaker22/SMART ) for detailed instructions on environment setup and dependency setup.
 
 For your reference, training on NVIDIA RTX PRO 6000 Blackwell with 98GB VRAM took ~6 hours per epoch on the WOMD training dataset.
 Fine-tuning took ~40 hours.
 ## Data Downloading:
-You can download data from Google Cloud Buckets from [Waymo](https://waymo.com/open/download) website. Easiest way to download the data is to install gsutil and use the command
+You can download data from Google Cloud Buckets from [Waymo](https://waymo.com/open/download) website. The easiest way to download the data is to install gsutil and use the command
 ```
 gsutil cp -r <bucket address. starts with gs:// > <destination folder directory>
 ```
