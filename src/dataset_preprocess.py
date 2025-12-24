@@ -661,7 +661,7 @@ def wm2argo(file, dir_name, output_dir,codebook_dir):
     else:
         NotImplementedError()
 
-    womd_camera_codebook = np.load(codebook_dir)
+    # womd_camera_codebook = np.load(codebook_dir)
     # filenames = tf.io.matching_files(FILES)
     # dataset = tf.data.TFRecordDataset(filenames)
 
