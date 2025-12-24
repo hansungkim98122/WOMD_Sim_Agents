@@ -7,6 +7,11 @@ from tqdm import tqdm
 from typing import Any, Dict, List, Optional
 import easydict
 from waymo_open_dataset.utils import womd_camera_utils
+import tensorflow as tf
+# Hide GPU from TensorFlow so it doesn't reserve VRAM.
+tf.config.set_visible_devices([], 'GPU')
+from waymo_open_dataset.protos import scenario_pb2
+from pathlib import Path
 
 predict_unseen_agents = False
 vector_repr = True
@@ -642,10 +647,6 @@ def process_single_data(scenario):
     }
     save_infos.update(info)
     return save_infos
-
-import tensorflow as tf
-from waymo_open_dataset.protos import scenario_pb2
-from pathlib import Path
 
 def wm2argo(file, dir_name, output_dir,codebook_dir):
     file_path = os.path.join(dir_name, file)
