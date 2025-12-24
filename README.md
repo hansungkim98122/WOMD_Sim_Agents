@@ -41,7 +41,7 @@ After downloading the Waymo Open Motion Dataset (Scenario: training, validation,
 cd src
 ```
 ```
-python data_preprocessing.py --input_dir <raw_scenario_data_directory> --output_dir <desired output directory>
+python data_preprocessing.py --input_dir <raw_scenario_data_directory (i.e. training, validation, and testing folder)> --output_dir <desired output directory>
 ```
 
 You can store the data in any directory you prefer, but you must explicitly set the paths to the raw (uncompressed) WOMD data and the preprocessed data in the YAML files under src/configs and in the path definitions used in the Jupyter notebooks.
